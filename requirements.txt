@@ -6,3 +6,4 @@ streamlit-webrtc
 av
 streamlit-authenticator
 PyYAML
+opencv-python-headless
