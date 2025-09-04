@@ -35,7 +35,6 @@ if not os.path.exists('config.yaml'):
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
-# CORRECTED Authenticator Initialization (Fixes the DeprecationError)
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
@@ -135,16 +134,13 @@ def summarize_session(questions, answers, resume, model):
         
 # --- PDF Generation ---
 class PDF(FPDF):
-    def header(self):
-        self.set_font('Arial', 'B', 12); self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
-    def footer(self):
-        self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+    def header(self): self.set_font('Arial', 'B', 12); self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
+    def footer(self): self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
 def generate_pdf(name, role, summary, questions, answers):
     pdf = PDF()
     pdf.add_page()
-    def write_text(text):
-        pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
+    def write_text(text): pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
     pdf.set_font('Arial', 'B', 16); write_text(f"Candidate: {name}")
     pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
     pdf.ln(10)
@@ -153,7 +149,7 @@ def generate_pdf(name, role, summary, questions, answers):
 # --- Main Application UI ---
 def sidebar():
     st.sidebar.markdown(f"Welcome *{st.session_state['name']}*")
-    authenticator.logout('Logout', 'sidebar')
+    authenticator.logout('Logout', 'sidebar', key='logout_button')
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Interview Settings")
     st.session_state["openai_api_key"] = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here")
@@ -167,28 +163,28 @@ def app_logic():
 
 def setup_section():
     st.header("Step 1: Resume and Candidate Details")
-    resume = None
+    name = st.text_input("Candidate Name", value=st.session_state.get('name', ''))
+    role = st.text_input("Position / Role", "Software Engineer")
+    q_count = st.slider("Number of Questions", 3, 10, 5)
+    
     uploaded_file = st.file_uploader("Upload candidate's resume (PDF or TXT)", type=["pdf", "txt"])
     if uploaded_file:
         resume = extract_text(uploaded_file)
         st.text_area("Resume Preview", resume, height=150)
-    name = st.text_input("Candidate Name")
-    role = st.text_input("Position / Role", "Software Engineer")
-    q_count = st.slider("Number of Questions", 3, 10, 5)
-    if st.button("Start Interview", type="primary"):
-        if resume and name and get_openai_key():
-            st.session_state.update({"resume": resume, "candidate_name": name, "role": role, "q_count": q_count, "answers": [], "current_q": 0, "stage": "interview"})
-            with st.spinner("Generating personalized questions..."):
-                st.session_state.questions = generate_questions(resume, role, "Mid-Level", q_count, MODELS["GPT-4o"])
-            st.rerun()
-        else:
-            st.warning("Please upload a resume, enter the candidate's name, and provide an API key.")
+        
+        if st.button("Start Interview", type="primary"):
+            if resume and name and get_openai_key():
+                st.session_state.update({"resume": resume, "candidate_name": name, "role": role, "q_count": q_count, "answers": [], "current_q": 0, "stage": "interview"})
+                with st.spinner("Generating personalized questions..."):
+                    st.session_state.questions = generate_questions(resume, role, "Mid-Level", q_count, MODELS["GPT-4o"])
+                st.rerun()
+            else:
+                st.warning("Please ensure all fields are complete and an API key is provided.")
 
 def interview_section():
     idx = st.session_state.current_q
     questions = st.session_state.get("questions", [])
-    if not questions or idx >= len(questions):
-        st.session_state.stage = "summary"; st.rerun()
+    if not questions or idx >= len(questions): st.session_state.stage = "summary"; st.rerun()
 
     q = questions[idx]
     st.header(f"Question {idx+1}/{len(questions)}: {q['topic']} ({q['difficulty']})"); st.subheader(q['text'])
@@ -249,7 +245,33 @@ def summary_section():
         st.rerun()
 
 # --- Main App Execution ---
-name, authentication_status, username = authenticator.login('main')
-if st.session_state["authentication_status"]: sidebar(); app_logic()
-elif st.session_state["authentication_status"] is False: st.error('Username/password is incorrect')
-elif st.session_state["authentication_status"] is None: st.warning('Please enter your username and password to access the AI Interviewer.')
+# Check if user is authenticated
+if "authentication_status" not in st.session_state:
+    st.session_state.authentication_status = None
+
+if not st.session_state["authentication_status"]:
+    login_tab, register_tab = st.tabs(["Login", "Register"])
+    
+    with login_tab:
+        authenticator.login() # Renders the login form
+        if st.session_state["authentication_status"]:
+            st.rerun() # Rerun to show the main app
+        elif st.session_state["authentication_status"] is False:
+            st.error('Username/password is incorrect')
+        elif st.session_state["authentication_status"] is None:
+            st.warning('Please enter your username and password.')
+
+    with register_tab:
+        st.subheader("Create a New Account")
+        try:
+            if authenticator.register_user(preauthorization=False):
+                st.success('User registered successfully! Please go to the Login tab to sign in.')
+                # Update the config file with the new user
+                with open('config.yaml', 'w') as file:
+                    yaml.dump(config, file, default_flow_style=False)
+        except Exception as e:
+            st.error(e)
+else:
+    # If authenticated, show the main app
+    sidebar()
+    app_logic()
