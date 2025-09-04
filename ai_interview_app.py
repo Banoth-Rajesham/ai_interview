@@ -28,7 +28,6 @@ RTC_CONFIGURATION = RTCConfiguration(
 )
 
 # --- Top-Level Class Definition for WebRTC ---
-# This class is defined at the top level (global scope) to ensure it is stable across reruns.
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
@@ -76,7 +75,12 @@ def openai_client():
 def chat_completion(messages, model="gpt-4o", temperature=0.3, max_tokens=1500):
     client = openai_client()
     try:
-        resp = client.chat.completions.create(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens)
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
         return resp
     except Exception as e:
         st.error(f"OpenAI Error: {e}")
@@ -96,7 +100,9 @@ def transcribe_audio(audio_bytes):
     try:
         with io.BytesIO(audio_bytes) as file:
             file.name = "interview_answer.wav"
-            transcript = client.audio.transcriptions.create(model="whisper-1", file=file, response_format="text")
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1", file=file, response_format="text"
+            )
             return transcript
     except Exception as e:
         st.warning(f"Whisper transcription failed: {e}")
@@ -226,7 +232,14 @@ def interview_section():
         if "audio_buffer" not in st.session_state: st.session_state.audio_buffer = []
         if "proctoring_img" not in st.session_state: st.session_state.proctoring_img = None
         
-        webrtc_ctx = webrtc_streamer(key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV, rtc_configuration=RTC_CONFIGURATION, media_stream_constraints={"video": True, "audio": True}, processor_factory=InterviewProcessor, async_processing=True)
+        webrtc_ctx = webrtc_streamer(
+            key=f"interview_cam_{idx}",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIGURATION,
+            media_stream_constraints={"video": True, "audio": True},
+            processor_factory=lambda: InterviewProcessor(),  # ✅ Fixed
+            async_processing=True
+        )
         
         if webrtc_ctx.state.playing and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
