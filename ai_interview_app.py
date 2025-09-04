@@ -28,7 +28,7 @@ RTC_CONFIGURATION = RTCConfiguration(
 )
 
 # --- Top-Level Class Definition for WebRTC ---
-# The InterviewProcessor class is defined here to ensure it's stable across reruns.
+# The InterviewProcessor class is defined here at the top level to ensure it's stable.
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
@@ -42,8 +42,7 @@ class InterviewProcessor:
             if time.time() - self.last_proctor_time > 10:
                 st.session_state.proctoring_img = frame.to_image()
                 self.last_proctor_time = time.time()
-            return frame```
-
+            return frame
 
 # --- User Authentication ---
 if not os.path.exists('config.yaml'):
