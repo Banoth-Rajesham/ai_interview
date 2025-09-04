@@ -1,7 +1,7 @@
 import streamlit_authenticator as stauth
 # Replace 'abc' and 'def' with the passwords you want to use
 hashed_passwords = stauth.Hasher(['abc', 'def']).generate() 
-print(hashed_passwords)```
+print(hashed_passwords)
 Copy the output and paste it into the `config.yaml` file.
 
 ---
