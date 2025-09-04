@@ -1,43 +1,43 @@
-# File 3: README.md
-
 # AI Interviewer Streamlit App
 
-This app provides a full AI-driven interview experience with login/authentication, resume upload, AI question generation, voice question & answer, GPT-based evaluation, and comprehensive reporting.
+This app provides a full AI-driven interview experience with user login, resume upload, AI-generated questions, voice answers, and comprehensive reporting.
 
 ## Features
 
-- Login & authentication with `streamlit-authenticator`
-- Upload resume (PDF/TXT) or use demo resume
-- Generate personalized interview questions (GPT-4o/4/3.5)
-- Answer questions using microphone with speech-to-text (Whisper API)
-- Text-to-speech question playback
-- GPT scoring, feedback, improvements & model answers
-- Download PDF report & JSON session export
-- Save sessions with SQLite and local JSON files
+- **User Authentication:** Secure login and registration powered by `streamlit-authenticator`.
+- **Resume Parsing:** Upload a resume in PDF or TXT format to tailor the interview.
+- **Dynamic Question Generation:** Uses OpenAI's GPT models to create relevant questions based on the resume and job role.
+- **Voice-to-Text Answers:** Candidates can answer questions using their voice, which is transcribed in real-time.
+- **Video & Audio Streaming:** Utilizes `streamlit-webrtc` for live video feed and audio capture.
+- **AI-Powered Evaluation:** Candidate answers are evaluated by an AI, providing a score and constructive feedback.
+- **Proctoring:** Captures periodic snapshots from the video feed to ensure the candidate's presence.
+- **PDF Reports:** Generates a downloadable PDF summary of the entire interview session.
 
-## Setup
+## Setup & Installation
 
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/your-username/ai_interview.git
+    cd ai_interview
+    ```
 
-## Configuration
+2.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-- Set your OpenAI API key either in environment variable `OPENAI_API_KEY` or paste in sidebar input.
+3.  **Configure Credentials:**
+    - Create a `config.yaml` file with the structure provided.
+    - **Important:** You must hash your passwords before adding them. Create and run a temporary Python script (`generate_keys.py`) with `import streamlit_authenticator as stauth; print(stauth.Hasher(['pass1', 'pass2']).generate())` to get the hashed values.
 
-## Usage
+4.  **Run the application:**
+    ```bash
+    streamlit run ai_interview_app.py
+    ```
 
-- Login with demo credentials:
-  - alice / 123
-  - bob / abc
-  - carol / xyz
-- Upload your resume or select demo
-- Enter candidate info, start interview
-- Answer questions using voice or fallback text
-- Download detailed PDF and JSON report
-- Save session for future review
+## File Structure
 
-## License
-
-Open source for demonstration purposes.
-
----
-
-Developed by
+-   `ai_interview_app.py`: The main Streamlit application script.
+-   `config.yaml`: Stores user credentials and authentication settings.
+-   `requirements.txt`: Lists all required Python packages.
+-   `README.md`: This file.
