@@ -1,0 +1,33 @@
+# --- Core AI Logic ---
+def generate_questions(resume, role, experience, num_questions, model):
+    prompt = f"""Generate {num_questions} diverse interview questions for a {role} ({experience}) based on this resume: {resume}. Return a JSON list of objects, each with 'text', 'topic', and 'difficulty' keys."""
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        response = chat_completion(messages, model=model, temperature=0.5)
+        json_match = re.search(r'\[.*\]', response.choices[0].message.content, re.DOTALL)
+        return json.loads(json_match.group(0)) if json_match else None
+    except Exception as e:
+        st.error(f"Error generating questions: {e}")
+        return None
+
+def evaluate_answer(question, answer, resume, model):
+    prompt = f"""Evaluate the candidate's answer based on their resume. Resume: {resume}. Question: {question['text']}. Answer: {answer}. Return a JSON object with 'score' (1-10), 'feedback', and a 'better_answer'."""
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        response = chat_completion(messages, model=model, temperature=0.2)
+        json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
+        return json.loads(json_match.group(0)) if json_match else {}
+    except Exception as e:
+        return {"score": 0, "feedback": f"Evaluation error: {e}", "better_answer": "N/A"}
+
+def summarize_session(questions, answers, resume, model):
+    transcript = "\n".join(f"Q: {q['text']}\nA: {a['answer']}\nScore: {a['score']}/10" for q, a in zip(questions, answers))
+    prompt = f"""Summarize the interview. Resume: {resume}. Transcript: {transcript}. Return a JSON object with 'overall_score' (1-10), 'strengths' (list of strings), 'weaknesses' (list of strings), and 'recommendation' ('Strong Hire', 'Hire', or 'No Hire')."""
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        response = chat_completion(messages, model=model)
+        json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
+        return json.loads(json_match.group(0)) if json_match else {}
+    except Exception as e:
+        st.error(f"Error summarizing session: {e}")
+        return {}
