@@ -28,7 +28,7 @@ RTC_CONFIGURATION = RTCConfiguration(
 )
 
 # --- Class Definition (Moved to Top Level) ---
-# This class is now defined only once, outside any function, which fixes the TypeError.
+# This is the critical fix. By defining the class here, it is stable across Streamlit reruns.
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
