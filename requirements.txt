@@ -5,3 +5,5 @@ fpdf
 numpy
 streamlit-authenticator
 streamlit-webrtc
+pydub
+av
