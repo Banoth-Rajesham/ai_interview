@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import datetime
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 # Import functions from your other files
 from utils import get_openai_key, extract_text, text_to_speech, autoplay_audio, transcribe_audio
@@ -9,7 +9,9 @@ from pdf_generator import generate_pdf
 
 # Constants that this file needs
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
-RTC_CONFIGURATION = {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
 
 # --- UI Functions ---
 def sidebar(authenticator):
@@ -19,7 +21,7 @@ def sidebar(authenticator):
     st.sidebar.markdown("### Interview Settings")
     st.session_state["openai_api_key"] = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here")
 
-def setup_section(authenticator, config):
+def setup_section():
     st.header("Step 1: Resume and Candidate Details")
     name = st.text_input("Candidate Name", value=st.session_state.get('name', ''))
     role = st.text_input("Position / Role", "Software Engineer")
@@ -39,7 +41,10 @@ def setup_section(authenticator, config):
             else:
                 st.warning("Please ensure all fields are complete and an API key is provided.")
 
-def interview_section(authenticator, config, InterviewProcessor):
+def interview_section():
+    # We need to get the InterviewProcessor class from the session state where the main app put it
+    InterviewProcessor = st.session_state.InterviewProcessor
+    
     idx = st.session_state.current_q
     questions = st.session_state.get("questions", [])
     if not questions or idx >= len(questions):
@@ -99,7 +104,7 @@ def interview_section(authenticator, config, InterviewProcessor):
             else:
                 st.error("Transcription failed. Please try recording your answer again.")
 
-def summary_section(authenticator, config):
+def summary_section():
     st.header("Step 3: Interview Summary")
     with st.spinner("Generating final summary..."):
         summary = summarize_session(st.session_state.questions, st.session_state.answers, st.session_state.resume, MODELS["GPT-4o"])
