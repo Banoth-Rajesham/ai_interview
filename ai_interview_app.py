@@ -29,7 +29,7 @@ RTC_CONFIGURATION = RTCConfiguration(
 
 # --------------------------------------------------------------------------------
 # CRITICAL FIX: The InterviewProcessor class is now at the top-level (global scope).
-# This ensures it is defined only ONCE and fixes the TypeError.
+# This ensures it is defined only ONCE and fixes the stubborn TypeError.
 # --------------------------------------------------------------------------------
 class InterviewProcessor:
     def __init__(self):
@@ -41,7 +41,6 @@ class InterviewProcessor:
             self.audio_buffer.append(frame.to_ndarray().tobytes())
             return frame
         elif isinstance(frame, av.VideoFrame):
-            # Take a snapshot for proctoring every 10 seconds
             if time.time() - self.last_proctor_time > 10:
                 st.session_state.proctoring_img = frame.to_image()
                 self.last_proctor_time = time.time()
@@ -162,6 +161,7 @@ def generate_pdf(name, role, summary, questions, answers):
     pdf = PDF()
     pdf.add_page()
     def write_text(text): pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
+    
     pdf.set_font('Arial', 'B', 16); write_text(f"Candidate: {name}")
     pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
     pdf.ln(10)
