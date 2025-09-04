@@ -8,9 +8,9 @@ credentials:
       email: rbriggs@gmail.com
       name: Rebecca Briggs
       password: 'REPLACE_WITH_YOUR_HASHED_PASSWORD_2'
-  preauthorized: # This is the corrected position
+  preauthorized:
     emails: []
 cookie:
   expiry_days: 30
-  key: a_secure_random_key # Choose any random string
+  key: a_secure_random_key_123 # You can change this to any random string
   name: ai_interviewer_cookie
