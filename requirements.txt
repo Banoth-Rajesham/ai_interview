@@ -4,3 +4,4 @@ PyPDF2
 fpdf
 numpy
 streamlit-authenticator
+streamlit-webrtc
