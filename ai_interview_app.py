@@ -27,8 +27,10 @@ RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# --- Class Definition (Moved to Top Level) ---
-# This is the critical fix. By defining the class here, it is stable across Streamlit reruns.
+# --------------------------------------------------------------------------------
+# CRITICAL FIX: The InterviewProcessor class is now at the top-level (global scope).
+# This ensures it is defined only ONCE and fixes the TypeError.
+# --------------------------------------------------------------------------------
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
@@ -63,8 +65,8 @@ authenticator = stauth.Authenticate(
 # --- Utility Functions ---
 def get_openai_key():
     key = st.session_state.get("openai_api_key", "")
-    if not key:
-        key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+    if not key and "OPENAI_API_KEY" in st.secrets:
+        key = st.secrets["OPENAI_API_KEY"]
     if not key:
         st.error("Please add your OpenAI API key in the sidebar!")
         st.stop()
@@ -106,10 +108,11 @@ def transcribe_audio(audio_bytes):
 def extract_text(file):
     if file.name.lower().endswith(".pdf"):
         text = "".join(page.extract_text() or "" for page in PyPDF2.PdfReader(file).pages)
-        return "\n".join(line.strip() for line in text.splitlines() if line.strip())
     elif file.name.lower().endswith(".txt"):
-        return "\n".join(line.strip() for line in file.read().decode().splitlines() if line.strip())
-    return None
+        text = file.read().decode("utf-8")
+    else:
+        return None
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
 
 def autoplay_audio(audio_bytes: bytes):
     b64 = base64.b64encode(audio_bytes).decode("utf-8")
@@ -159,17 +162,14 @@ def generate_pdf(name, role, summary, questions, answers):
     pdf = PDF()
     pdf.add_page()
     def write_text(text): pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
-    
     pdf.set_font('Arial', 'B', 16); write_text(f"Candidate: {name}")
     pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
     pdf.ln(10)
-
     pdf.set_font('Arial', 'B', 14); write_text("Detailed Question & Answer Analysis")
     for i, (q, a) in enumerate(zip(questions, answers)):
         pdf.set_font('Arial', 'B', 12); write_text(f"Q{i+1}: {q['text']}")
         pdf.set_font('Arial', '', 12); write_text(f"Answer: {a['answer']}")
-        pdf.set_font('Arial', 'I', 12); write_text(f"Feedback: {a['feedback']} (Score: {a['score']}/10)"); pdf.ln(10)
-
+        pdf.set_font('Arial', 'I', 12); write_text(f"Feedback: {a['feedback']} (Score: {a['score']}/10)"); pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1')
 
 # --- Main Application UI ---
