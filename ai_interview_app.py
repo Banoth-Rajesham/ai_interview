@@ -11,12 +11,13 @@ Dependencies:
 - numpy
 - sqlite3
 - streamlit-authenticator
+- streamlit-audio-recorder (added for clearer dependency)
 
 Setup:
-1. pip install -r requirements.txt
+1. pip install streamlit openai PyPDF2 fpdf numpy sqlite3 streamlit-authenticator streamlit-audio-recorder
 2. Run:
    streamlit run ai_interview_app.py
-3. Provide your OpenAI API Key in the sidebar or set as an environment variable.
+3. Provide your OpenAI API Key in the sidebar or set as an environment variable (OPENAI_API_KEY).
 
 Features:
 - User login / registration (basic, demo accounts)
@@ -37,13 +38,14 @@ import tempfile
 import io
 import json
 import sqlite3
-import numpy as np
+import numpy as np # Although numpy isn't directly used in the provided code, it's a common dependency for data science apps
 from fpdf import FPDF
 from datetime import datetime
 import os
 import re
 import ast
 import streamlit_authenticator as stauth
+from streamlit_audio_recorder import st_audio_recorder # Added for explicit audio recording widget
 
 # === Config === #
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
@@ -52,7 +54,7 @@ John Smith
 Software Engineer
 Experience: 5 years
 Skills: Python, Machine Learning, API development, SQL, Cloud Computing
-Projects: 
+Projects:
 - Built a scalable recommendation system for e-commerce.
 - Designed deep learning models for image recognition.
 Education:
@@ -133,12 +135,23 @@ def clean_resume_text(text):
 # === Helpers: OpenAI API calls === #
 def openai_chat(messages, model="gpt-4o", temperature=0.3, max_tokens=1200):
     openai.api_key = get_openai_api_key()
-    return openai.ChatCompletion.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens
-    )
+    if not openai.api_key:
+        st.error("OpenAI API key not found. Please provide it in the sidebar.")
+        st.stop()
+    try:
+        # Use ChatCompletion.create for older OpenAI library versions, or client.chat.completions.create for newer
+        # This code assumes an older version if openai.ChatCompletion is directly available.
+        # If using newer `openai` library (>=1.0.0), you'd need `client = openai.OpenAI(); client.chat.completions.create(...)`
+        return openai.ChatCompletion.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+    except openai.error.OpenAIError as e:
+        st.error(f"OpenAI API Error: {e}")
+        st.stop()
+
 
 def generate_interview_questions(resume_text, role, exp_level, question_count, model_name):
     prompt = f"""
@@ -166,6 +179,7 @@ Return ONLY a JSON array of question objects.
             return data
         except Exception:
             try:
+                # Fallback to literal_eval for malformed JSON that Python can interpret
                 data = ast.literal_eval(q_array)
                 for i, q in enumerate(data):
                     q["id"] = i+1
@@ -211,6 +225,7 @@ Return JSON only in format:
             return eval_json
         except Exception:
             try:
+                # Fallback for malformed JSON
                 eval_json = ast.literal_eval(match.group(0))
                 eval_json['score'] = int(eval_json.get('score', 0))
                 eval_json['improvements'] = eval_json.get('improvements', [])[:3]
@@ -281,24 +296,38 @@ Return JSON only with:
 # Whisper API STT
 def transcribe_audio(audio_bytes, model="whisper-1"):
     openai.api_key = get_openai_api_key()
+    if not openai.api_key:
+        st.error("OpenAI API key not found for speech-to-text. Please provide it in the sidebar.")
+        return None
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp_wav:
         tmp_wav.write(audio_bytes)
         tmp_wav.flush()
         try:
+            # For newer OpenAI library (>=1.0.0), you'd need `client = openai.OpenAI(); client.audio.transcriptions.create(...)`
             transcript = openai.Audio.transcribe(model=model, file=open(tmp_wav.name, "rb"))
             return transcript.text
-        except Exception:
-            st.warning("Speech-to-Text failed. Please type your answer.")
+        except openai.error.OpenAIError as e:
+            st.warning(f"Speech-to-Text failed due to OpenAI API error: {e}. Please type your answer.")
+            return None
+        except Exception as e:
+            st.warning(f"Speech-to-Text failed: {e}. Please type your answer.")
             return None
 
 # TTS playback via OpenAI TTS API (if available)
 def tts_speak(text, voice="alloy"):
     openai.api_key = get_openai_api_key()
+    if not openai.api_key:
+        st.warning("OpenAI API key not found for text-to-speech. Please read the question yourself.")
+        return None
     try:
+        # For newer OpenAI library (>=1.0.0), you'd need `client = openai.OpenAI(); client.audio.speech.create(...)`
         response = openai.audio.speech.create(model="tts-1", voice=voice, input=text)
         return response.content
-    except Exception:
-        st.warning("Text-to-Speech failed. Please read the question yourself.")
+    except openai.error.OpenAIError as e:
+        st.warning(f"Text-to-Speech failed due to OpenAI API error: {e}. Please read the question yourself.")
+        return None
+    except Exception as e:
+        st.warning(f"Text-to-Speech failed: {e}. Please read the question yourself.")
         return None
 
 # === Helpers: PDF report generation === #
@@ -320,9 +349,9 @@ def generate_pdf_report(candidate_name, role, exp_level, questions, answers_eval
 
     for i, q in enumerate(questions):
         e = answers_evals[i] if i < len(answers_evals) else {}
-        pdf.cell(0, 8, f"Q{i+1}. {q['text']}", ln=True)
-        pdf.cell(0, 8, f" Topic: {q['topic']}, Difficulty: {q['difficulty']}", ln=True)
-        pdf.multi_cell(0, 8, f" Answer: {e.get('answer', '')}", ln=True)
+        pdf.multi_cell(0, 8, f"Q{i+1}. {q['text']}")
+        pdf.multi_cell(0, 8, f" Topic: {q['topic']}, Difficulty: {q['difficulty']}")
+        pdf.multi_cell(0, 8, f" Answer: {e.get('answer', '')}")
         pdf.multi_cell(0, 8, f" Score: {e.get('score', 0)}")
         pdf.multi_cell(0, 8, f" Justification: {e.get('justification', '')}")
         pdf.multi_cell(0, 8, " Improvements: " + "; ".join(e.get('improvements', [])))
@@ -332,11 +361,11 @@ def generate_pdf_report(candidate_name, role, exp_level, questions, answers_eval
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 8, "Summary", ln=True)
     pdf.set_font("Arial", size=11)
-    pdf.cell(0, 8, f"Overall Score: {summary.get('overall_score', '-')}/10", ln=True)
-    pdf.cell(0, 8, "Strengths: " + "; ".join(summary.get('strengths', [])), ln=True)
-    pdf.cell(0, 8, "Weaknesses: " + "; ".join(summary.get('weaknesses', [])), ln=True)
-    pdf.cell(0, 8, f"Recommendation: {summary.get('recommendation', '')}", ln=True)
-    pdf.cell(0, 8, "Next Steps: " + "; ".join(summary.get('next_steps', [])), ln=True)
+    pdf.multi_cell(0, 8, f"Overall Score: {summary.get('overall_score', '-')}/10")
+    pdf.multi_cell(0, 8, "Strengths: " + "; ".join(summary.get('strengths', [])))
+    pdf.multi_cell(0, 8, "Weaknesses: " + "; ".join(summary.get('weaknesses', [])))
+    pdf.multi_cell(0, 8, f"Recommendation: {summary.get('recommendation', '')}")
+    pdf.multi_cell(0, 8, "Next Steps: " + "; ".join(summary.get('next_steps', [])))
 
     buf = io.BytesIO()
     pdf.output(buf)
@@ -364,49 +393,62 @@ def ui_sidebar(username):
     st.sidebar.markdown("---")
     st.sidebar.write(f"Logged in as: **{username}**")
 
-    if st.sidebar.button("Show Previous Sessions"):
+    # This part needs a clear distinction between displaying and acting
+    if st.sidebar.button("Show Previous Sessions", key="show_sessions_btn"):
+        st.session_state["show_past_sessions"] = True
+
+    if st.session_state.get("show_past_sessions", False):
         sessions = list_sessions_from_db(username)
         if not sessions:
             st.sidebar.info("No saved sessions available")
         else:
-            for id_, name, role, exp, date in sessions:
-                st.sidebar.write(f"ID: {id_} | {name} | {role} | Exp: {exp} | {date}")
-            load_id = st.sidebar.text_input("Enter Session ID to Load")
-            if load_id:
+            st.sidebar.subheader("Available Sessions")
+            session_options = [f"ID: {id_} | {name} | {role} | Exp: {exp} | {date}" for id_, name, role, exp, date in sessions]
+            selected_session_display = st.sidebar.selectbox("Select Session to Load", [""] + session_options, key="select_session_to_load")
+
+            if selected_session_display:
+                session_id = int(selected_session_display.split(" | ")[0].replace("ID: ", ""))
                 try:
-                    j = get_session_json_from_db(int(load_id), username)
+                    j = get_session_json_from_db(session_id, username)
                     st.session_state["loaded_session_json"] = j
-                    st.sidebar.success("Session loaded!")
-                except:
-                    st.sidebar.error("Failed to load session. Check ID or try again.")
+                    st.sidebar.success(f"Session ID {session_id} loaded!")
+                    st.session_state["show_past_sessions"] = False # Hide after loading
+                    st.rerun() # Rerun to display loaded session immediately
+                except Exception as e:
+                    st.sidebar.error(f"Failed to load session {session_id}. Error: {e}")
+            st.sidebar.markdown("---")
+
 
 def ui_resume_upload():
     st.subheader("Step 1: Upload Resume or Use Demo")
     uploaded_file = st.file_uploader("Upload Resume (PDF or TXT)", type=["pdf", "txt"])
-    use_demo = st.checkbox("Use Demo Resume")
+    use_demo = st.checkbox("Use Demo Resume", key="use_demo_resume")
+    
+    resume_text = None
     if uploaded_file:
         try:
             resume_text = extract_text_from_resume(uploaded_file=uploaded_file)
             st.success("Resume successfully uploaded and parsed.")
-            st.text_area("Resume Preview", resume_text, height=180)
-            return resume_text
+            st.text_area("Resume Preview", resume_text, height=180, key="uploaded_resume_preview")
         except Exception as e:
             st.error("Failed to parse resume: " + str(e))
-            return None
-    if use_demo:
+    elif use_demo:
         st.info("Demo resume loaded.")
-        st.text_area("Demo Resume Preview", DEFAULT_DEMO_RESUME, height=180)
-        return DEFAULT_DEMO_RESUME
-    st.warning("Please upload a resume file or select demo resume.")
-    return None
+        resume_text = DEFAULT_DEMO_RESUME
+        st.text_area("Demo Resume Preview", DEFAULT_DEMO_RESUME, height=180, key="demo_resume_preview")
+
+    if not resume_text:
+        st.warning("Please upload a resume file or select demo resume to proceed.")
+        return None
+    return resume_text
 
 def ui_candidate_info():
     st.subheader("Step 2: Enter Candidate Details")
-    candidate_name = st.text_input("Candidate Name")
-    role = st.text_input("Position / Role", value="Software Engineer")
-    exp_level = st.selectbox("Experience Level", ["Intern", "Junior", "Mid-Level", "Senior", "Lead", "Manager"])
-    question_num = st.slider("Number of Interview Questions", 3, 10, 5)
-    model_choice = st.selectbox("OpenAI Model", list(MODELS.keys()), index=0)
+    candidate_name = st.text_input("Candidate Name", key="candidate_name")
+    role = st.text_input("Position / Role", value="Software Engineer", key="candidate_role")
+    exp_level = st.selectbox("Experience Level", ["Intern", "Junior", "Mid-Level", "Senior", "Lead", "Manager"], key="exp_level_select")
+    question_num = st.slider("Number of Interview Questions", 3, 10, 5, key="question_count_slider")
+    model_choice = st.selectbox("OpenAI Model", list(MODELS.keys()), index=0, key="model_select")
     return candidate_name, role, exp_level, question_num, MODELS[model_choice]
 
 def ui_instructions():
@@ -424,43 +466,77 @@ def ui_interview(questions, resume_text, model_name):
     st.write(f"Role: {st.session_state.get('role','')}, Model: {model_name}, Questions: {len(questions)}")
     
     answers_evaluations = []
-    for idx, question in enumerate(questions):
+    # Ensure current_question_idx is initialized
+    if "current_question_idx" not in st.session_state:
+        st.session_state["current_question_idx"] = 0
+
+    if st.session_state["current_question_idx"] < len(questions):
+        idx = st.session_state["current_question_idx"]
+        question = questions[idx]
+
         st.markdown(f"**Q{idx+1}. ({question['topic']}, {question['difficulty']}, ~{question['estimated_time_seconds']}s)**")
         st.write(question['text'])
 
-        tts_audio = tts_speak(question['text'])
+        tts_audio_content = tts_speak(question['text'])
         col1, col2 = st.columns([1, 2])
-        if tts_audio:
+        if tts_audio_content:
             with col1:
-                st.audio(tts_audio, format="audio/mp3")
+                st.audio(tts_audio_content, format="audio/mp3", autoplay=True, key=f"tts_audio_{idx}")
         else:
             with col1:
                 st.info("Cannot play audio question. Please read it.")
 
         with col2:
             st.write("Answer via microphone:")
-            audio_input = st.audio_recorder(key=f"mic_{idx}", pause_threshold=2)
+            # Use the explicit st_audio_recorder
+            audio_bytes = st_audio_recorder(key=f"audio_recorder_{idx}", pause_threshold=2)
             candidate_answer = None
-            if audio_input:
-                candidate_answer = transcribe_audio(audio_input)
-            if not candidate_answer:
-                candidate_answer = st.text_area(f"Or type your answer (Q{idx+1})", key=f"text_{idx}")
-            if not candidate_answer:
-                st.warning("Awaiting your answer...")
-                st.stop()
 
-            st.info("Evaluating your answer...")
-            eval_result = evaluate_answer(question, candidate_answer, resume_text, model_name)
-            eval_result['answer'] = candidate_answer
-            st.success(f"Score: {eval_result['score']}/10")
-            st.markdown(f"**Justification:** {eval_result['justification']}")
-            st.markdown("**Improvements:**")
-            for imp in eval_result['improvements']:
-                st.write(f"- {imp}")
-            st.markdown(f"**Model Answer:** {eval_result['model_answer']}")
-            answers_evaluations.append(eval_result)
-            st.markdown("---")
-    return answers_evaluations
+            if audio_bytes:
+                st.info("Transcribing audio...")
+                candidate_answer = transcribe_audio(audio_bytes)
+                if candidate_answer:
+                    st.text_area("Your transcribed answer:", value=candidate_answer, height=100, key=f"transcribed_answer_{idx}")
+                else:
+                    st.warning("Could not transcribe audio. Please type your answer below.")
+            
+            # Fallback to text area if no audio or transcription failed
+            typed_answer = st.text_area(f"Or type your answer (Q{idx+1})", value=candidate_answer if candidate_answer else "", key=f"text_answer_{idx}")
+            
+            final_answer = typed_answer.strip()
+
+            if st.button(f"Submit Answer for Q{idx+1}", key=f"submit_q_{idx}"):
+                if not final_answer:
+                    st.warning("Please provide an answer before submitting.")
+                    st.stop()
+                
+                with st.spinner("Evaluating your answer..."):
+                    eval_result = evaluate_answer(question, final_answer, resume_text, model_name)
+                    eval_result['answer'] = final_answer
+                
+                # Store evaluation result temporarily
+                if "all_answers_evals" not in st.session_state:
+                    st.session_state["all_answers_evals"] = []
+                st.session_state["all_answers_evals"].append(eval_result)
+
+                st.success(f"Score: {eval_result['score']}/10")
+                st.markdown(f"**Justification:** {eval_result['justification']}")
+                st.markdown("**Improvements:**")
+                for imp in eval_result['improvements']:
+                    st.write(f"- {imp}")
+                st.markdown(f"**Model Answer:** {eval_result['model_answer']}")
+                st.markdown("---")
+
+                st.session_state["current_question_idx"] += 1
+                st.rerun() # Rerun to display the next question or summary
+            else:
+                st.info("Submit your answer to proceed.")
+                st.stop() # Halt execution until submit button is pressed
+    else:
+        # All questions answered
+        st.success("You have completed the interview!")
+        answers_evaluations = st.session_state.get("all_answers_evals", [])
+        return answers_evaluations
 
 def ui_summary_and_export(username, candidate_name, role, exp_level, resume_text, questions, answers_evals, summary):
     st.header("Interview Summary & Report")
@@ -474,22 +550,55 @@ def ui_summary_and_export(username, candidate_name, role, exp_level, resume_text
     st.subheader("Download Artifacts")
 
     pdf_buf = generate_pdf_report(candidate_name, role, exp_level, questions, answers_evals, summary)
-    st.download_button("Download PDF Report", data=pdf_buf, file_name=f"Interview_Report_{candidate_name}_{datetime.now().strftime('%Y%m%d')}.pdf")
+    st.download_button("Download PDF Report", data=pdf_buf, file_name=f"Interview_Report_{candidate_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf", mime="application/pdf")
     
     session_json = make_session_json(candidate_name, role, exp_level, resume_text, questions, answers_evals, summary)
-    st.download_button("Export Session JSON", data=json.dumps(session_json, indent=2), file_name=f"Interview_Session_{candidate_name}_{datetime.now().strftime('%Y%m%d')}.json")
+    st.download_button("Export Session JSON", data=json.dumps(session_json, indent=2), file_name=f"Interview_Session_{candidate_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", mime="application/json")
 
-    if st.button("Save Session to DB and JSON Folder"):
+    if st.button("Save Session to DB and JSON Folder", key="save_session_btn"):
         save_session_to_db(username, candidate_name, role, exp_level, session_json)
+        # Ensure the directory exists before writing
+        os.makedirs(SESSION_JSON_DIR, exist_ok=True)
         with open(f"{SESSION_JSON_DIR}/Interview_Session_{candidate_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "w") as f:
             f.write(json.dumps(session_json, indent=2))
         st.success("Session saved!")
+        # Clear session state to allow starting a new interview cleanly
+        for key in ["current_question_idx", "all_answers_evals", "questions_generated", "loaded_session_json"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.info("You can now start a new interview or view saved sessions.")
 
-# === Authentication Setup ===
 # === Authentication Setup ===
 def auth_login():
     # Define credentials in new format
     credentials = {
+        "usernames": {
+            "alice": {
+                "name": "Alice",
+                "password": stauth.Hasher(['123']).generate()[0] # Hash passwords once if not already hashed
+            },
+            "bob": {
+                "name": "Bob",
+                "password": stauth.Hasher(['abc']).generate()[0]
+            },
+            "carol": {
+                "name": "Carol",
+                "password": stauth.Hasher(['xyz']).generate()[0]
+            }
+        }
+    }
+    # It's better to hash passwords once and store them.
+    # For demo, I'm doing it here, but in a real app, you'd store hashed passwords.
+    # The existing hashed passwords are fine if they came from an earlier run.
+    # You can get the hash for a password like this in a separate script:
+    # import streamlit_authenticator as stauth
+    # hashed_passwords = stauth.Hasher(['your_password']).generate()
+    # print(hashed_passwords[0])
+
+    # The existing hashed passwords in your provided code were correct.
+    # I'm using the Hasher here for demonstration of generating them.
+    # You can keep the hardcoded hashed strings if they are what you intend to use.
+    credentials_to_use = {
         "usernames": {
             "alice": {
                 "name": "Alice",
@@ -506,19 +615,16 @@ def auth_login():
         }
     }
 
+
     authenticator = stauth.Authenticate(
-        credentials,
+        credentials_to_use, # Use the pre-hashed credentials
         "interview_app_cookie",
         "interview_app_signature",
         cookie_expiry_days=30
     )
 
-    # Modify this line:
-    name, auth_status, username = authenticator.login(
-        prompt_for_username=True, # This is often the default, but good to be explicit
-        fields={'Form name': 'Login'}, # Set the form title
-        location='main' # Explicitly set the location
-    )
+    # Correct call for streamlit-authenticator login
+    name, auth_status, username = authenticator.login("Login", "main")
 
     if auth_status:
         st.session_state["username"] = username
@@ -529,50 +635,25 @@ def auth_login():
         st.warning("Please enter your credentials")
     return authenticator, None
 
-
 # === Main App === #
 def main():
     st.set_page_config(page_title="AI Interviewer App", layout="wide")
     init_db()
+
+    # Authentication must happen before any other Streamlit components are rendered
     authenticator, username = auth_login()
+    
     if not username:
-        return
+        # If not logged in, stop execution after login component
+        st.stop()
+
+    # User is logged in, proceed with the app
     ui_sidebar(username)
 
     st.title("🔊 AI Interviewer with AI-powered Q&A and Evaluation")
     
-    # Step 1: Resume Upload / Demo
-    resume_text = ui_resume_upload()
-    if not resume_text:
-        st.stop()
-
-    # Step 2: Candidate Info
-    candidate_name, role, exp_level, question_count, model_name = ui_candidate_info()
-    if not candidate_name:
-        st.warning("Please enter your candidate name to proceed.")
-        st.stop()
-
-    st.session_state['role'] = role
-    st.session_state['exp_level'] = exp_level
-
-    st.markdown("---")
-    ui_instructions()
-
-    start_btn = st.button("Start Interview")
-    if start_btn:
-        st.info("Generating questions...")
-        questions = generate_interview_questions(resume_text, role, exp_level, question_count, model_name)
-        if not questions:
-            st.error("Question generation failed. Please try again.")
-            st.stop()
-
-        answers_evals = ui_interview(questions, resume_text, model_name)
-        st.info("Generating summary...")
-        summary = summarize_session(questions, answers_evals, resume_text, model_name)
-        
-        ui_summary_and_export(username, candidate_name, role, exp_level, resume_text, questions, answers_evals, summary)
-
-    elif "loaded_session_json" in st.session_state:
+    # Check if a session was loaded from the sidebar
+    if "loaded_session_json" in st.session_state and st.session_state["loaded_session_json"]:
         loaded = st.session_state["loaded_session_json"]
         st.header("Loaded Previous Interview Session")
         ui_summary_and_export(
@@ -585,6 +666,25 @@ def main():
             loaded["interview"]["answers_evals"],
             loaded["interview"]["summary"]
         )
+        # Clear the loaded session after displaying to prevent it from re-displaying on rerun
+        st.session_state["loaded_session_json"] = None
+        return # Stop execution after displaying loaded session
 
-if __name__ == "__main__":
-    main()
+    # Initialize session state variables for the interview process
+    if "questions_generated" not in st.session_state:
+        st.session_state["questions_generated"] = []
+    if "all_answers_evals" not in st.session_state:
+        st.session_state["all_answers_evals"] = []
+    if "current_question_idx" not in st.session_state:
+        st.session_state["current_question_idx"] = 0
+
+
+    # Step 1: Resume Upload / Demo
+    resume_text = ui_resume_upload()
+    if not resume_text:
+        st.stop() # Halt until resume is provided
+
+    # Step 2: Candidate Info
+    candidate_name, role, exp_level, question_count, model_name = ui_candidate_info()
+    if not candidate_name:
+        st.warning("Please enter your
