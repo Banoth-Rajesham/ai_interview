@@ -28,6 +28,7 @@ RTC_CONFIGURATION = RTCConfiguration(
 )
 
 # --- Top-Level Class Definition for WebRTC ---
+# This class is defined at the top level (global scope) to ensure it is stable across reruns.
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
