@@ -6,11 +6,7 @@ Copy the output and paste it into the `config.yaml` file.
 
 ---
 
-### **Final and Complete Code**
 
-Save this code as your main Python application file (e.g., `app.py`).
-
-```python
 import streamlit as st
 import openai
 import PyPDF2
