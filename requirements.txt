@@ -2,8 +2,7 @@ streamlit
 openai
 PyPDF2
 fpdf
-numpy
-streamlit-authenticator
 streamlit-webrtc
-pydub
 av
+streamlit-authenticator
+PyYAML
