@@ -1,3 +1,16 @@
+import streamlit_authenticator as stauth
+# Replace 'abc' and 'def' with the passwords you want to use
+hashed_passwords = stauth.Hasher(['abc', 'def']).generate() 
+print(hashed_passwords)```
+Copy the output and paste it into the `config.yaml` file.
+
+---
+
+### **Final and Complete Code**
+
+Save this code as your main Python application file (e.g., `app.py`).
+
+```python
 import streamlit as st
 import openai
 import PyPDF2
@@ -9,28 +22,39 @@ from datetime import datetime
 import re
 import av
 import base64
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, AudioProcessorBase
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
+import time
+
+# --- Page Config ---
+st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")
 
 # --- Constants ---
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
-DEFAULT_DEMO = """
-John Smith
-Software Engineer
-Experience: 5 years
-Skills: Python, Machine Learning, API development, SQL, Cloud Computing
-Projects:
-- Built a scalable recommendation system for e-commerce.
-- Designed deep learning models for image recognition.
-Education:
-- B.Tech in Computer Science
-Achievements:
-- Published paper in IEEE AI Conference.
-- Lead developer for open source project with 1,000+ stars.
-"""
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
 
-# --- Utils ---
+# RTC_CONFIGURATION uses a STUN server to help establish a connection for WebRTC,
+# fixing the "Connection is taking longer than expected" error.
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
+
+# --- User Authentication ---
+with open('config.yaml') as file:
+    config = yaml.load(file, Loader=SafeLoader)
+
+authenticator = stauth.Authenticate(
+    config['credentials'],
+    config['cookie']['name'],
+    config['cookie']['key'],
+    config['cookie']['expiry_days'],
+    config['preauthorized']
+)
+
+# --- Utility Functions ---
 def get_openai_key():
     key = st.session_state.get("openai_api_key", "")
     if not key:
@@ -44,15 +68,10 @@ def openai_client():
     key = get_openai_key()
     return openai.OpenAI(api_key=key)
 
-def chat_completion(messages, model="gpt-4o", temperature=0.3, max_tokens=1200):
+def chat_completion(messages, model="gpt-4o", temperature=0.3, max_tokens=1500):
     client = openai_client()
     try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
+        resp = client.chat.completions.create(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens)
         return resp
     except Exception as e:
         st.error(f"OpenAI Error: {e}")
@@ -64,7 +83,7 @@ def text_to_speech(text, voice="alloy"):
         res = client.audio.speech.create(model="tts-1", voice=voice, input=text)
         return res
     except Exception as e:
-        st.warning(f"TTS Error (use text): {e}")
+        st.warning(f"TTS Error: {e}")
         return None
 
 def transcribe_audio(audio_bytes):
@@ -80,264 +99,228 @@ def transcribe_audio(audio_bytes):
 
 def extract_text(file):
     if file.name.lower().endswith(".pdf"):
-        reader = PyPDF2.PdfReader(file)
-        text = "".join(page.extract_text() or "" for page in reader.pages)
+        text = "".join(page.extract_text() or "" for page in PyPDF2.PdfReader(file).pages)
         return "\n".join(line.strip() for line in text.splitlines() if line.strip())
     elif file.name.lower().endswith(".txt"):
         return "\n".join(line.strip() for line in file.read().decode().splitlines() if line.strip())
-    else:
-        st.error("Unsupported file format. Use PDF or TXT.")
-        return None
-        
+    return None
+
 def autoplay_audio(audio_bytes: bytes):
     b64 = base64.b64encode(audio_bytes).decode("utf-8")
-    md = f"""
-        <audio controls autoplay="true">
-        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-        </audio>
-        """
+    md = f"""<audio controls autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>"""
     st.markdown(md, unsafe_allow_html=True)
 
-
-# --- Core Logic Functions (Implemented) ---
-
+# --- Core AI Logic ---
 def generate_questions(resume, role, experience, num_questions, model):
-    prompt = f"""
-    Based on the following resume and job description, generate {num_questions} interview questions.
-    **Resume:** {resume}
-    **Role:** {role}
-    **Experience Level:** {experience}
-    Instructions: Create a mix of technical, behavioral, and project-based questions. For each question, specify a 'topic' (e.g., "Python", "System Design", "Behavioral") and a 'difficulty' ("Easy", "Medium", "Hard"). Return a JSON-formatted list of dictionaries with keys: "text", "topic", "difficulty".
-    """
+    prompt = f"""Generate {num_questions} diverse interview questions for a {role} ({experience}) based on this resume: {resume}. Return a JSON list of objects, each with 'text', 'topic', and 'difficulty' keys."""
     messages = [{"role": "user", "content": prompt}]
     try:
-        response = chat_completion(messages, model=model, temperature=0.5, max_tokens=1500)
-        content = response.choices[0].message.content
-        json_match = re.search(r'\[.*\]', content, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(0))
-        st.error("Failed to parse questions from AI response.")
-        return None
+        response = chat_completion(messages, model=model, temperature=0.5)
+        json_match = re.search(r'\[.*\]', response.choices[0].message.content, re.DOTALL)
+        return json.loads(json_match.group(0)) if json_match else None
     except Exception as e:
         st.error(f"Error generating questions: {e}")
         return None
 
 def evaluate_answer(question, answer, resume, model):
-    prompt = f"""
-    Evaluate a candidate's answer to an interview question based on their resume.
-    **Resume:** {resume}
-    **Question:** {question['text']} (Topic: {question['topic']}, Difficulty: {question['difficulty']})
-    **Candidate's Answer:** {answer}
-    Instructions: Assess technical accuracy, clarity, and depth. Provide a 'score' (1-10), constructive 'feedback', and a 'better_answer'. Return a single JSON object with keys: "score", "feedback", "better_answer".
-    """
+    prompt = f"""Evaluate the candidate's answer based on their resume. Resume: {resume}. Question: {question['text']}. Answer: {answer}. Return a JSON object with 'score' (1-10), 'feedback', and a 'better_answer'."""
     messages = [{"role": "user", "content": prompt}]
     try:
-        response = chat_completion(messages, model=model, temperature=0.2, max_tokens=1000)
-        content = response.choices[0].message.content
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(0))
-        return {"score": 0, "feedback": "Error parsing response.", "better_answer": "N/A"}
+        response = chat_completion(messages, model=model, temperature=0.2)
+        json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
+        return json.loads(json_match.group(0)) if json_match else {}
     except Exception as e:
-        return {"score": 0, "feedback": str(e), "better_answer": "N/A"}
+        return {"score": 0, "feedback": f"Evaluation error: {e}", "better_answer": "N/A"}
 
 def summarize_session(questions, answers, resume, model):
-    session_details = "\n".join(
-        f"Q: {q['text']}\nA: {a['answer']}\nScore: {a['score']}/10\n---"
-        for q, a in zip(questions, answers)
-    )
-    prompt = f"""
-    Provide a final summary of an interview based on the transcript and resume.
-    **Resume:** {resume}
-    **Full Interview Transcript:** {session_details}
-    Instructions: Calculate an 'overall_score' (1-10). List 'strengths' and 'weaknesses'. Provide a final 'recommendation' ("Strong Hire", "Hire", "No Hire"). Suggest 'next_steps'. Return a JSON object with keys: "overall_score", "strengths", "weaknesses", "recommendation", "next_steps". 'strengths', 'weaknesses', 'next_steps' should be lists of strings.
-    """
+    transcript = "\n".join(f"Q: {q['text']}\nA: {a['answer']}\nScore: {a['score']}/10" for q, a in zip(questions, answers))
+    prompt = f"""Summarize the interview. Resume: {resume}. Transcript: {transcript}. Return a JSON object with 'overall_score' (1-10), 'strengths' (list of strings), 'weaknesses' (list of strings), and 'recommendation' ('Strong Hire', 'Hire', or 'No Hire')."""
     messages = [{"role": "user", "content": prompt}]
     try:
-        response = chat_completion(messages, model=model, temperature=0.4, max_tokens=1500)
-        content = response.choices[0].message.content
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(0))
-        return {}
+        response = chat_completion(messages, model=model)
+        json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
+        return json.loads(json_match.group(0)) if json_match else {}
     except Exception as e:
+        st.error(f"Error summarizing session: {e}")
         return {}
-
+        
+# --- PDF Generation ---
 class PDF(FPDF):
     def header(self):
-        self.set_font('Arial', 'B', 12)
-        self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
-        self.ln(10)
+        self.set_font('Arial', 'B', 12); self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
     def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+        self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-def generate_pdf(name, role, exp, questions, answers, summary):
+def generate_pdf(name, role, summary, questions, answers):
     pdf = PDF()
     pdf.add_page()
-    pdf.set_font('Arial', '', 12)
     def write_text(text):
         pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
+
     pdf.set_font('Arial', 'B', 16); write_text(f"Candidate: {name}")
-    pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nExperience: {exp}\nDate: {datetime.now().strftime('%Y-%m-%d')}"); pdf.ln(10)
-    pdf.set_font('Arial', 'B', 14); write_text("Interview Summary")
-    pdf.set_font('Arial', '', 12); write_text(f"Overall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}"); pdf.ln(5)
-    pdf.set_font('Arial', 'B', 12); write_text("Strengths:"); pdf.set_font('Arial', '', 12)
-    for s in summary.get("strengths", []): write_text(f"- {s}")
-    pdf.ln(5); pdf.set_font('Arial', 'B', 12); write_text("Weaknesses:"); pdf.set_font('Arial', '', 12)
-    for w in summary.get("weaknesses", []): write_text(f"- {w}")
-    pdf.ln(10); pdf.set_font('Arial', 'B', 14); write_text("Detailed Question & Answer Analysis")
-    for i, (q, a) in enumerate(zip(questions, answers)):
-        pdf.set_font('Arial', 'B', 12); write_text(f"Q{i+1}: {q['text']} ({q['topic']} | {q['difficulty']})")
-        pdf.set_font('Arial', '', 12); write_text(f"Answer: {a['answer']}")
-        pdf.set_font('Arial', 'I', 12); write_text(f"Feedback: {a['feedback']} (Score: {a['score']}/10)"); pdf.ln(10)
+    pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
+    pdf.ln(10)
+    # Add more details as needed
     return pdf.output(dest='S').encode('latin-1')
 
-def make_session_json(name, role, exp, resume, questions, answers):
-    return {"candidate_name": name, "role": role, "experience": exp, "resume": resume, "questions": questions, "answers": answers, "timestamp": datetime.now().isoformat()}
-
-# --- UI Helpers ---
+# --- Main Application UI ---
 def sidebar():
-    st.sidebar.markdown("# AI Interviewer Settings")
-    key = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste your OpenAI API key here")
-    st.session_state["openai_api_key"] = key
+    st.sidebar.markdown(f"Welcome *{st.session_state['name']}*")
+    authenticator.logout('Logout', 'sidebar')
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Interview Settings")
+    st.session_state["openai_api_key"] = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here")
 
-def resume_section():
-    st.markdown("## Step 1: Upload Resume or Use Demo")
-    uploaded_file = st.file_uploader("Upload resume (PDF or TXT)", type=["pdf", "txt"])
-    use_demo = st.checkbox("Use Demo Resume")
-    resume = None
-    if uploaded_file:
-        resume = extract_text(uploaded_file)
-        if resume: st.text_area("Resume Preview", resume, height=150)
-    elif use_demo:
-        st.text_area("Demo Resume Preview", DEFAULT_DEMO, height=150)
-        resume = DEFAULT_DEMO
-    return resume
+def app_logic():
+    st.title("🧠 AI Interviewer")
+    
+    if "stage" not in st.session_state:
+        st.session_state.stage = "setup"
 
-def candidate_section():
-    st.markdown("## Step 2: Candidate Information")
-    name = st.text_input("Candidate Name")
-    role = st.text_input("Position / Role", "Software Engineer")
-    exp = st.selectbox("Experience Level", ["Intern", "Junior", "Mid-Level", "Senior"])
-    q_count = st.slider("Number of Questions", 3, 10, 5)
-    model_key = st.selectbox("OpenAI Model", list(MODELS.keys()), index=0)
-    return name.strip(), role.strip(), exp, q_count, MODELS[model_key]
+    # Stage 1: Setup
+    if st.session_state.stage == "setup":
+        st.header("Step 1: Resume and Candidate Details")
+        resume = None
+        uploaded_file = st.file_uploader("Upload candidate's resume (PDF or TXT)", type=["pdf", "txt"])
+        if uploaded_file:
+            resume = extract_text(uploaded_file)
+            st.text_area("Resume Preview", resume, height=150)
 
-def interview_section(questions, resume, model):
-    st.markdown("## Step 3: Interview")
-    idx = st.session_state.current_index
-    if idx >= len(questions):
-        st.success("Interview completed! Proceeding to summary.")
-        return
+        name = st.text_input("Candidate Name")
+        role = st.text_input("Position / Role", "Software Engineer")
+        q_count = st.slider("Number of Questions", 3, 10, 5)
+
+        if st.button("Start Interview", type="primary"):
+            if resume and name and get_openai_key():
+                st.session_state.update({"resume": resume, "candidate_name": name, "role": role, "q_count": q_count, "answers": [], "current_q": 0, "stage": "interview"})
+                with st.spinner("Generating personalized questions..."):
+                    st.session_state.questions = generate_questions(resume, role, "Mid-Level", q_count, MODELS["GPT-4o"])
+                st.rerun()
+            else:
+                st.warning("Please upload a resume, enter the candidate's name, and provide an API key.")
+
+    # Stage 2: Interview
+    elif st.session_state.stage == "interview":
+        interview_section()
+
+    # Stage 3: Summary
+    elif st.session_state.stage == "summary":
+        summary_section()
+
+def interview_section():
+    idx = st.session_state.current_q
+    questions = st.session_state.questions
+    if not questions or idx >= len(questions):
+        st.session_state.stage = "summary"
+        st.rerun()
 
     q = questions[idx]
-    st.subheader(f"Question {idx+1}: {q.get('topic','')} ({q.get('difficulty','')})")
-    st.write(q["text"])
+    st.header(f"Question {idx+1}/{len(questions)}: {q['topic']} ({q['difficulty']})")
+    st.subheader(q['text'])
 
     if f"tts_{idx}" not in st.session_state:
-        with st.spinner("Generating question audio..."):
-            audio_resp = text_to_speech(q["text"])
-            if audio_resp: st.session_state[f"tts_{idx}"] = audio_resp.content
-    if st.session_state.get(f"tts_{idx}"):
-        autoplay_audio(st.session_state[f"tts_{idx}"])
-
-    st.markdown("### Record your answer")
+        with st.spinner("Generating audio..."):
+            st.session_state[f"tts_{idx}"] = text_to_speech(q['text']).content
     
-    # This is where we will store the recorded audio frames
-    if "audio_buffer" not in st.session_state:
-        st.session_state.audio_buffer = []
+    autoplay_audio(st.session_state[f"tts_{idx}"])
+    st.markdown("---")
 
-    class AudioRecorder(AudioProcessorBase):
-        def __init__(self):
-            self.audio_buffer = []
-
-        def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-            # We must return the frame to avoid breaking the stream
-            self.audio_buffer.append(frame.to_ndarray().tobytes())
-            return frame
-
-    webrtc_ctx = webrtc_streamer(
-        key=f"audio_recorder_{idx}",
-        mode=WebRtcMode.SENDRECV,
-        audio_processor_factory=AudioRecorder,
-        media_stream_constraints={"audio": True, "video": False},
-    )
-
-    if webrtc_ctx.state.playing and webrtc_ctx.audio_processor:
-        st.session_state.audio_buffer.extend(webrtc_ctx.audio_processor.audio_buffer)
-        webrtc_ctx.audio_processor.audio_buffer.clear()
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown("#### Candidate Live Feed")
+        if "audio_buffer" not in st.session_state: st.session_state.audio_buffer = []
+        if "proctoring_img" not in st.session_state: st.session_state.proctoring_img = None
         
-    if st.button("Stop and Submit Answer", key=f"submit_{idx}"):
+        # Audio + Video Processor Class
+        class InterviewProcessor:
+            def __init__(self):
+                self.audio_buffer = []
+                self.last_proctor_time = time.time()
+            def recv(self, frame):
+                if isinstance(frame, av.AudioFrame):
+                    self.audio_buffer.append(frame.to_ndarray().tobytes())
+                    return frame
+                elif isinstance(frame, av.VideoFrame):
+                    if time.time() - self.last_proctor_time > 10: # Snapshot every 10 seconds
+                        st.session_state.proctoring_img = frame.to_image()
+                        self.last_proctor_time = time.time()
+                    return frame
+
+        webrtc_ctx = webrtc_streamer(
+            key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIGURATION,
+            media_stream_constraints={"video": True, "audio": True},
+            processor_factory=InterviewProcessor, async_processing=True
+        )
+        if webrtc_ctx.state.playing and webrtc_ctx.processor:
+            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
+            webrtc_ctx.processor.audio_buffer.clear()
+
+    with col2:
+        st.markdown("#### Proctoring Snapshot")
+        if st.session_state.proctoring_img:
+            st.image(st.session_state.proctoring_img, caption=f"Snapshot at {datetime.now().strftime('%H:%M:%S')}")
+        else:
+            st.info("Waiting for first candidate snapshot...")
+
+    st.markdown("---")
+    if st.button("Stop and Submit Answer", type="primary"):
+        if webrtc_ctx.state.playing:
+            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
+
         if not st.session_state.audio_buffer:
             st.warning("Please record an answer before submitting.")
             return
 
-        # Combine audio chunks. 
-        # Note: This is a simplified approach. For production, you'd want to properly format it as a WAV file.
         full_audio_bytes = b"".join(st.session_state.audio_buffer)
-        
-        # Clear buffer for next question
         st.session_state.audio_buffer = []
-
+        
         with st.spinner("Transcribing and evaluating your answer..."):
             answer_text = transcribe_audio(full_audio_bytes)
             if answer_text:
-                st.info(f"**Your Answer (Transcribed):** {answer_text}")
-                evaluation = evaluate_answer(q, answer_text, resume, model)
+                st.info(f"**Transcribed Answer:** {answer_text}")
+                evaluation = evaluate_answer(q, answer_text, st.session_state.resume, MODELS["GPT-4o"])
                 evaluation["answer"] = answer_text
                 st.session_state.answers.append(evaluation)
-                st.session_state.current_index += 1
+                st.session_state.current_q += 1
+                st.session_state.proctoring_img = None # Reset for next question
                 st.rerun()
             else:
                 st.error("Transcription failed. Please try recording your answer again.")
 
-def summary_section(name, role, exp, resume, questions, answers):
-    st.markdown("## Step 4: Summary & Export")
-    with st.spinner("Generating overall summary..."):
-        summary = summarize_session(questions, answers, resume, st.session_state.model)
-
+def summary_section():
+    st.header("Step 3: Interview Summary")
+    with st.spinner("Generating final summary..."):
+        summary = summarize_session(st.session_state.questions, st.session_state.answers, st.session_state.resume, MODELS["GPT-4o"])
+    
     st.subheader(f"Overall Score: {summary.get('overall_score', '-')}/10")
     st.markdown(f"**Recommendation:** {summary.get('recommendation', '')}")
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Strengths:**")
-        for strength in summary.get("strengths", []): st.write(f"- {strength}")
+        for s in summary.get("strengths", []): st.write(f"- {s}")
     with col2:
         st.markdown("**Weaknesses:**")
-        for weakness in summary.get("weaknesses", []): st.write(f"- {weakness}")
-    pdf_buffer = generate_pdf(name, role, exp, questions, answers, summary)
-    st.download_button("Download PDF Report", pdf_buffer, f"{name.replace(' ','_')}_Report.pdf", "application/pdf")
-
-def main():
-    st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")
-    st.title("🧠 AI Interviewer")
-    sidebar()
+        for w in summary.get("weaknesses", []): st.write(f"- {w}")
     
-    # Initialize state
-    if "current_index" not in st.session_state: st.session_state.current_index = 0
-    if "answers" not in st.session_state: st.session_state.answers = []
+    pdf_buffer = generate_pdf(st.session_state.candidate_name, st.session_state.role, summary, st.session_state.questions, st.session_state.answers)
+    st.download_button("Download PDF Report", pdf_buffer, f"{st.session_state.candidate_name}_Report.pdf", type="primary")
 
-    # State Machine
-    if "questions" not in st.session_state:
-        resume = resume_section()
-        if resume:
-            st.session_state.resume = resume
-            name, role, exp, q_count, model = candidate_section()
-            if name and st.button("Start Interview"):
-                st.session_state.update({"candidate_name": name, "role": role, "experience": exp, "num_questions": q_count, "model": model})
-                with st.spinner("Generating questions..."):
-                    questions = generate_questions(st.session_state.resume, role, exp, q_count, model)
-                    if questions:
-                        st.session_state.questions = questions
-                        st.rerun()
-                    else:
-                        st.error("Failed to generate questions.")
-    elif st.session_state.current_index < len(st.session_state.questions):
-        interview_section(st.session_state.questions, st.session_state.resume, st.session_state.model)
-    else:
-        summary_section(st.session_state.candidate_name, st.session_state.role, st.session_state.experience, st.session_state.resume, st.session_state.questions, st.session_state.answers)
+    if st.button("Start New Interview"):
+        keys_to_clear = list(st.session_state.keys())
+        for key in keys_to_clear:
+            if key not in ['authentication_status', 'name', 'username']:
+                del st.session_state[key]
+        st.rerun()
 
-if __name__ == "__main__":
-    main()
+# --- Main App Execution ---
+name, authentication_status, username = authenticator.login('main')
+
+if st.session_state["authentication_status"]:
+    sidebar()
+    app_logic()
+elif st.session_state["authentication_status"] is False:
+    st.error('Username/password is incorrect')
+elif st.session_state["authentication_status"] is None:
+    st.warning('Please enter your username and password to access the AI Interviewer.')
