@@ -513,7 +513,12 @@ def auth_login():
         cookie_expiry_days=30
     )
 
-    name, auth_status, username = authenticator.login("Login", "main")
+    # Modify this line:
+    name, auth_status, username = authenticator.login(
+        prompt_for_username=True, # This is often the default, but good to be explicit
+        fields={'Form name': 'Login'}, # Set the form title
+        location='main' # Explicitly set the location
+    )
 
     if auth_status:
         st.session_state["username"] = username
@@ -523,7 +528,6 @@ def auth_login():
     elif auth_status is None:
         st.warning("Please enter your credentials")
     return authenticator, None
-
 
 
 # === Main App === #
