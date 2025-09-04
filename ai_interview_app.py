@@ -237,9 +237,8 @@ def interview_section():
         
         webrtc_ctx = webrtc_streamer(key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV, rtc_configuration=RTC_CONFIGURATION, media_stream_constraints={"video": True, "audio": True}, video_processor_factory=InterviewProcessor, async_processing=True)
 
-        if webrtc_ctx.state.playing and webrtc_ctx.processor:
-            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
-            webrtc_ctx.processor.audio_buffer.clear()
+        if webrtc_ctx and webrtc_ctx.state.playing and getattr(webrtc_ctx, "processor", None): (st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer), webrtc_ctx.processor.audio_buffer.clear())
+
 
     with col2:
         st.markdown("#### Proctoring Snapshot")
