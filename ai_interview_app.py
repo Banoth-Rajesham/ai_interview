@@ -497,7 +497,9 @@ def auth_login():
     ]
     authenticator = stauth.Authenticate(
         names, usernames, passwords,
-        "interview_app_cookie", "interview_app_signature", cookie_expiry_days=30
+        cookie_name="interview_app_cookie",
+        key="interview_app_signature",
+        cookie_expiry_days=30
     )
     name, auth_status, username = authenticator.login("Login", "main")
     if auth_status:
