@@ -1,4 +1,11 @@
-# --- Utility Functions ---
+import streamlit as st
+import openai
+import PyPDF2
+import io
+import base64
+
+# This file contains helper functions.
+
 def get_openai_key():
     key = st.session_state.get("openai_api_key", "")
     if not key and "OPENAI_API_KEY" in st.secrets:
