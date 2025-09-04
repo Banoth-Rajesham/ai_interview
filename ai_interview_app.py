@@ -52,7 +52,7 @@ def app_logic():
     if st.session_state.stage == "setup":
         setup_section()
     elif st.session_state.stage == "interview":
-        interview_section()
+        interview_section(InterviewProcessor) # Pass the class here
     elif st.session_state.stage == "summary":
         summary_section()
 
