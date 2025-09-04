@@ -1,4 +1,8 @@
-# --- PDF Generation ---
+from fpdf import FPDF
+from datetime import datetime
+
+# This file handles the creation of the PDF report.
+
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
