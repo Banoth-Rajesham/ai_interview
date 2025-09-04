@@ -1,8 +1,8 @@
-# File 2: requirements.txt
-
 streamlit
 openai
 PyPDF2
 fpdf
 numpy
+sqlite3
 streamlit-authenticator
+streamlit-audio-recorder
