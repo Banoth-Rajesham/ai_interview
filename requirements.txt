@@ -3,6 +3,6 @@ openai
 PyPDF2
 fpdf
 numpy
-sqlite3
 streamlit-authenticator
 streamlit-audio-recorder
+# DO NOT include sqlite3 here!
