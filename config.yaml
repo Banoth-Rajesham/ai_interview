@@ -3,14 +3,14 @@ credentials:
     jsmith:
       email: jsmith@gmail.com
       name: John Smith
-      password: 'REPLACE_WITH_HASHED_PASSWORD_1' 
+      password: 'REPLACE_WITH_YOUR_HASHED_PASSWORD_1'
     rbriggs:
       email: rbriggs@gmail.com
       name: Rebecca Briggs
-      password: 'REPLACE_WITH_HASHED_PASSWORD_2'
+      password: 'REPLACE_WITH_YOUR_HASHED_PASSWORD_2'
+  preauthorized: # This is the corrected position
+    emails: []
 cookie:
   expiry_days: 30
-  key: random_signature_key_for_security # Can be any random string
+  key: a_secure_random_key # Choose any random string
   name: ai_interviewer_cookie
-preauthorized:
-  emails: []
