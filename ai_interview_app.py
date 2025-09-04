@@ -1,16 +1,3 @@
-import streamlit_authenticator as stauth
-# Replace 'abc' and 'def' with the passwords you want to use
-hashed_passwords = stauth.Hasher(['abc', 'def']).generate() 
-print(hashed_passwords)
-Copy the output and paste it into the `config.yaml` file.
-
----
-
-### **Final and Complete Code**
-
-Save this code as your main Python application file (e.g., `app.py`).
-
-```python
 import streamlit as st
 import openai
 import PyPDF2
@@ -43,6 +30,11 @@ RTC_CONFIGURATION = RTCConfiguration(
 )
 
 # --- User Authentication ---
+# Ensure the config.yaml file exists before trying to open it
+if not os.path.exists('config.yaml'):
+    st.error("Fatal Error: `config.yaml` not found. Please create the configuration file.")
+    st.stop()
+
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
@@ -209,7 +201,7 @@ def app_logic():
 
 def interview_section():
     idx = st.session_state.current_q
-    questions = st.session_state.questions
+    questions = st.session_state.get("questions", [])
     if not questions or idx >= len(questions):
         st.session_state.stage = "summary"
         st.rerun()
@@ -220,9 +212,15 @@ def interview_section():
 
     if f"tts_{idx}" not in st.session_state:
         with st.spinner("Generating audio..."):
-            st.session_state[f"tts_{idx}"] = text_to_speech(q['text']).content
-    
-    autoplay_audio(st.session_state[f"tts_{idx}"])
+            audio_response = text_to_speech(q['text'])
+            if audio_response:
+                st.session_state[f"tts_{idx}"] = audio_response.content
+            else: # Handle TTS failure
+                st.session_state[f"tts_{idx}"] = None
+
+    if st.session_state[f"tts_{idx}"]:
+        autoplay_audio(st.session_state[f"tts_{idx}"])
+
     st.markdown("---")
 
     col1, col2 = st.columns([2, 1])
@@ -231,7 +229,6 @@ def interview_section():
         if "audio_buffer" not in st.session_state: st.session_state.audio_buffer = []
         if "proctoring_img" not in st.session_state: st.session_state.proctoring_img = None
         
-        # Audio + Video Processor Class
         class InterviewProcessor:
             def __init__(self):
                 self.audio_buffer = []
@@ -241,7 +238,7 @@ def interview_section():
                     self.audio_buffer.append(frame.to_ndarray().tobytes())
                     return frame
                 elif isinstance(frame, av.VideoFrame):
-                    if time.time() - self.last_proctor_time > 10: # Snapshot every 10 seconds
+                    if time.time() - self.last_proctor_time > 10:
                         st.session_state.proctoring_img = frame.to_image()
                         self.last_proctor_time = time.time()
                     return frame
@@ -265,7 +262,7 @@ def interview_section():
 
     st.markdown("---")
     if st.button("Stop and Submit Answer", type="primary"):
-        if webrtc_ctx.state.playing:
+        if webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
 
         if not st.session_state.audio_buffer:
@@ -283,7 +280,7 @@ def interview_section():
                 evaluation["answer"] = answer_text
                 st.session_state.answers.append(evaluation)
                 st.session_state.current_q += 1
-                st.session_state.proctoring_img = None # Reset for next question
+                st.session_state.proctoring_img = None
                 st.rerun()
             else:
                 st.error("Transcription failed. Please try recording your answer again.")
@@ -315,6 +312,7 @@ def summary_section():
         st.rerun()
 
 # --- Main App Execution ---
+# The login form must be called on every run of the script
 name, authentication_status, username = authenticator.login('main')
 
 if st.session_state["authentication_status"]:
