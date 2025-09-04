@@ -1,39 +1,63 @@
-import re
-import json
 import streamlit as st
-from utils import chat_completion # Import the specific function you need
+import openai
+import PyPDF2
+import io
+import base64
 
-# This file contains the functions that interact with the LLM.
+# This file contains helper functions.
 
-def generate_questions(resume, role, experience, num_questions, model):
-    prompt = f"""Generate {num_questions} diverse interview questions for a {role} ({experience}) based on this resume: {resume}. Return a JSON list of objects, each with 'text', 'topic', and 'difficulty' keys."""
-    messages = [{"role": "user", "content": prompt}]
+def get_openai_key():
+    key = st.session_state.get("openai_api_key", "")
+    if not key and "OPENAI_API_KEY" in st.secrets:
+        key = st.secrets["OPENAI_API_KEY"]
+    if not key:
+        st.error("Please add your OpenAI API key in the sidebar!")
+        st.stop()
+    return key
+
+def openai_client():
+    key = get_openai_key()
+    return openai.OpenAI(api_key=key)
+
+def chat_completion(messages, model="gpt-4o", temperature=0.3, max_tokens=1500):
+    client = openai_client()
     try:
-        response = chat_completion(messages, model=model, temperature=0.5)
-        json_match = re.search(r'\[.*\]', response.choices[0].message.content, re.DOTALL)
-        return json.loads(json_match.group(0)) if json_match else None
+        resp = client.chat.completions.create(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens)
+        return resp
     except Exception as e:
-        st.error(f"Error generating questions: {e}")
+        st.error(f"OpenAI Error: {e}")
+        st.stop()
+
+def text_to_speech(text, voice="alloy"):
+    client = openai_client()
+    try:
+        res = client.audio.speech.create(model="tts-1", voice=voice, input=text)
+        return res
+    except Exception as e:
+        st.warning(f"TTS Error: {e}")
         return None
 
-def evaluate_answer(question, answer, resume, model):
-    prompt = f"""Evaluate the candidate's answer based on their resume. Resume: {resume}. Question: {question['text']}. Answer: {answer}. Return a JSON object with 'score' (1-10), 'feedback', and a 'better_answer'."""
-    messages = [{"role": "user", "content": prompt}]
+def transcribe_audio(audio_bytes):
+    client = openai_client()
     try:
-        response = chat_completion(messages, model=model, temperature=0.2)
-        json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
-        return json.loads(json_match.group(0)) if json_match else {}
+        with io.BytesIO(audio_bytes) as file:
+            file.name = "interview_answer.wav"
+            transcript = client.audio.transcriptions.create(model="whisper-1", file=file, response_format="text")
+            return transcript
     except Exception as e:
-        return {"score": 0, "feedback": f"Evaluation error: {e}", "better_answer": "N/A"}
+        st.warning(f"Whisper transcription failed: {e}")
+        return None
 
-def summarize_session(questions, answers, resume, model):
-    transcript = "\n".join(f"Q: {q['text']}\nA: {a['answer']}\nScore: {a['score']}/10" for q, a in zip(questions, answers))
-    prompt = f"""Summarize the interview. Resume: {resume}. Transcript: {transcript}. Return a JSON object with 'overall_score' (1-10), 'strengths' (list of strings), 'weaknesses' (list of strings), and 'recommendation' ('Strong Hire', 'Hire', or 'No Hire')."""
-    messages = [{"role": "user", "content": prompt}]
-    try:
-        response = chat_completion(messages, model=model)
-        json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
-        return json.loads(json_match.group(0)) if json_match else {}
-    except Exception as e:
-        st.error(f"Error summarizing session: {e}")
-        return {}
+def extract_text(file):
+    if file.name.lower().endswith(".pdf"):
+        text = "".join(page.extract_text() or "" for page in PyPDF2.PdfReader(file).pages)
+    elif file.name.lower().endswith(".txt"):
+        text = file.read().decode("utf-8")
+    else:
+        return None
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+def autoplay_audio(audio_bytes: bytes):
+    b64 = base64.b64encode(audio_bytes).decode("utf-8")
+    md = f"""<audio controls autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></source></audio>"""
+    st.markdown(md, unsafe_allow_html=True)
