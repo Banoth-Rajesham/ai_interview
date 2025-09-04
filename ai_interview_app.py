@@ -44,10 +44,7 @@ class InterviewProcessor:
                 self.last_proctor_time = time.time()
             return frame```
 
-#### **Block 2: User Authentication**
-*This block handles the loading of the `config.yaml` file and initializes the authenticator object.*
 
-```python
 # --- User Authentication ---
 if not os.path.exists('config.yaml'):
     st.error("Fatal Error: `config.yaml` not found. Please create the configuration file.")
