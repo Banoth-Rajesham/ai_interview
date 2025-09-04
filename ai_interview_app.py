@@ -23,14 +23,11 @@ MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
 
-# RTC_CONFIGURATION uses a STUN server to help establish a connection for WebRTC,
-# fixing the "Connection is taking longer than expected" error.
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
 # --- User Authentication ---
-# Ensure the config.yaml file exists before trying to open it
 if not os.path.exists('config.yaml'):
     st.error("Fatal Error: `config.yaml` not found. Please create the configuration file.")
     st.stop()
@@ -38,12 +35,12 @@ if not os.path.exists('config.yaml'):
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
+# CORRECTED Authenticator Initialization (Fixes the DeprecationError)
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
     config['cookie']['key'],
-    config['cookie']['expiry_days'],
-    config['preauthorized']
+    config['cookie']['expiry_days']
 )
 
 # --- Utility Functions ---
@@ -148,11 +145,9 @@ def generate_pdf(name, role, summary, questions, answers):
     pdf.add_page()
     def write_text(text):
         pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
-
     pdf.set_font('Arial', 'B', 16); write_text(f"Candidate: {name}")
     pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
     pdf.ln(10)
-    # Add more details as needed
     return pdf.output(dest='S').encode('latin-1')
 
 # --- Main Application UI ---
@@ -165,160 +160,96 @@ def sidebar():
 
 def app_logic():
     st.title("🧠 AI Interviewer")
-    
-    if "stage" not in st.session_state:
-        st.session_state.stage = "setup"
+    if "stage" not in st.session_state: st.session_state.stage = "setup"
+    if st.session_state.stage == "setup": setup_section()
+    elif st.session_state.stage == "interview": interview_section()
+    elif st.session_state.stage == "summary": summary_section()
 
-    # Stage 1: Setup
-    if st.session_state.stage == "setup":
-        st.header("Step 1: Resume and Candidate Details")
-        resume = None
-        uploaded_file = st.file_uploader("Upload candidate's resume (PDF or TXT)", type=["pdf", "txt"])
-        if uploaded_file:
-            resume = extract_text(uploaded_file)
-            st.text_area("Resume Preview", resume, height=150)
-
-        name = st.text_input("Candidate Name")
-        role = st.text_input("Position / Role", "Software Engineer")
-        q_count = st.slider("Number of Questions", 3, 10, 5)
-
-        if st.button("Start Interview", type="primary"):
-            if resume and name and get_openai_key():
-                st.session_state.update({"resume": resume, "candidate_name": name, "role": role, "q_count": q_count, "answers": [], "current_q": 0, "stage": "interview"})
-                with st.spinner("Generating personalized questions..."):
-                    st.session_state.questions = generate_questions(resume, role, "Mid-Level", q_count, MODELS["GPT-4o"])
-                st.rerun()
-            else:
-                st.warning("Please upload a resume, enter the candidate's name, and provide an API key.")
-
-    # Stage 2: Interview
-    elif st.session_state.stage == "interview":
-        interview_section()
-
-    # Stage 3: Summary
-    elif st.session_state.stage == "summary":
-        summary_section()
+def setup_section():
+    st.header("Step 1: Resume and Candidate Details")
+    resume = None
+    uploaded_file = st.file_uploader("Upload candidate's resume (PDF or TXT)", type=["pdf", "txt"])
+    if uploaded_file:
+        resume = extract_text(uploaded_file)
+        st.text_area("Resume Preview", resume, height=150)
+    name = st.text_input("Candidate Name")
+    role = st.text_input("Position / Role", "Software Engineer")
+    q_count = st.slider("Number of Questions", 3, 10, 5)
+    if st.button("Start Interview", type="primary"):
+        if resume and name and get_openai_key():
+            st.session_state.update({"resume": resume, "candidate_name": name, "role": role, "q_count": q_count, "answers": [], "current_q": 0, "stage": "interview"})
+            with st.spinner("Generating personalized questions..."):
+                st.session_state.questions = generate_questions(resume, role, "Mid-Level", q_count, MODELS["GPT-4o"])
+            st.rerun()
+        else:
+            st.warning("Please upload a resume, enter the candidate's name, and provide an API key.")
 
 def interview_section():
     idx = st.session_state.current_q
     questions = st.session_state.get("questions", [])
     if not questions or idx >= len(questions):
-        st.session_state.stage = "summary"
-        st.rerun()
+        st.session_state.stage = "summary"; st.rerun()
 
     q = questions[idx]
-    st.header(f"Question {idx+1}/{len(questions)}: {q['topic']} ({q['difficulty']})")
-    st.subheader(q['text'])
+    st.header(f"Question {idx+1}/{len(questions)}: {q['topic']} ({q['difficulty']})"); st.subheader(q['text'])
 
     if f"tts_{idx}" not in st.session_state:
         with st.spinner("Generating audio..."):
             audio_response = text_to_speech(q['text'])
-            if audio_response:
-                st.session_state[f"tts_{idx}"] = audio_response.content
-            else: # Handle TTS failure
-                st.session_state[f"tts_{idx}"] = None
-
-    if st.session_state[f"tts_{idx}"]:
-        autoplay_audio(st.session_state[f"tts_{idx}"])
+            st.session_state[f"tts_{idx}"] = audio_response.content if audio_response else None
+    if st.session_state[f"tts_{idx}"]: autoplay_audio(st.session_state[f"tts_{idx}"])
 
     st.markdown("---")
-
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("#### Candidate Live Feed")
         if "audio_buffer" not in st.session_state: st.session_state.audio_buffer = []
         if "proctoring_img" not in st.session_state: st.session_state.proctoring_img = None
-        
         class InterviewProcessor:
-            def __init__(self):
-                self.audio_buffer = []
-                self.last_proctor_time = time.time()
+            def __init__(self): self.audio_buffer = []; self.last_proctor_time = time.time()
             def recv(self, frame):
-                if isinstance(frame, av.AudioFrame):
-                    self.audio_buffer.append(frame.to_ndarray().tobytes())
-                    return frame
+                if isinstance(frame, av.AudioFrame): self.audio_buffer.append(frame.to_ndarray().tobytes()); return frame
                 elif isinstance(frame, av.VideoFrame):
-                    if time.time() - self.last_proctor_time > 10:
-                        st.session_state.proctoring_img = frame.to_image()
-                        self.last_proctor_time = time.time()
+                    if time.time() - self.last_proctor_time > 10: st.session_state.proctoring_img = frame.to_image(); self.last_proctor_time = time.time()
                     return frame
-
-        webrtc_ctx = webrtc_streamer(
-            key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTC_CONFIGURATION,
-            media_stream_constraints={"video": True, "audio": True},
-            processor_factory=InterviewProcessor, async_processing=True
-        )
-        if webrtc_ctx.state.playing and webrtc_ctx.processor:
-            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
-            webrtc_ctx.processor.audio_buffer.clear()
-
+        webrtc_ctx = webrtc_streamer(key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV, rtc_configuration=RTC_CONFIGURATION, media_stream_constraints={"video": True, "audio": True}, processor_factory=InterviewProcessor, async_processing=True)
+        if webrtc_ctx.state.playing and webrtc_ctx.processor: st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer); webrtc_ctx.processor.audio_buffer.clear()
     with col2:
         st.markdown("#### Proctoring Snapshot")
-        if st.session_state.proctoring_img:
-            st.image(st.session_state.proctoring_img, caption=f"Snapshot at {datetime.now().strftime('%H:%M:%S')}")
-        else:
-            st.info("Waiting for first candidate snapshot...")
+        if st.session_state.proctoring_img: st.image(st.session_state.proctoring_img, caption=f"Snapshot at {datetime.now().strftime('%H:%M:%S')}")
+        else: st.info("Waiting for first candidate snapshot...")
 
     st.markdown("---")
     if st.button("Stop and Submit Answer", type="primary"):
-        if webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
-            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
-
-        if not st.session_state.audio_buffer:
-            st.warning("Please record an answer before submitting.")
-            return
-
-        full_audio_bytes = b"".join(st.session_state.audio_buffer)
-        st.session_state.audio_buffer = []
-        
+        if webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor: st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
+        if not st.session_state.audio_buffer: st.warning("Please record an answer before submitting."); return
+        full_audio_bytes = b"".join(st.session_state.audio_buffer); st.session_state.audio_buffer = []
         with st.spinner("Transcribing and evaluating your answer..."):
             answer_text = transcribe_audio(full_audio_bytes)
             if answer_text:
                 st.info(f"**Transcribed Answer:** {answer_text}")
-                evaluation = evaluate_answer(q, answer_text, st.session_state.resume, MODELS["GPT-4o"])
-                evaluation["answer"] = answer_text
-                st.session_state.answers.append(evaluation)
-                st.session_state.current_q += 1
-                st.session_state.proctoring_img = None
+                evaluation = evaluate_answer(q, answer_text, st.session_state.resume, MODELS["GPT-4o"]); evaluation["answer"] = answer_text
+                st.session_state.answers.append(evaluation); st.session_state.current_q += 1; st.session_state.proctoring_img = None
                 st.rerun()
-            else:
-                st.error("Transcription failed. Please try recording your answer again.")
+            else: st.error("Transcription failed. Please try recording your answer again.")
 
 def summary_section():
     st.header("Step 3: Interview Summary")
     with st.spinner("Generating final summary..."):
         summary = summarize_session(st.session_state.questions, st.session_state.answers, st.session_state.resume, MODELS["GPT-4o"])
-    
-    st.subheader(f"Overall Score: {summary.get('overall_score', '-')}/10")
-    st.markdown(f"**Recommendation:** {summary.get('recommendation', '')}")
-
+    st.subheader(f"Overall Score: {summary.get('overall_score', '-')}/10"); st.markdown(f"**Recommendation:** {summary.get('recommendation', '')}")
     col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Strengths:**")
-        for s in summary.get("strengths", []): st.write(f"- {s}")
-    with col2:
-        st.markdown("**Weaknesses:**")
-        for w in summary.get("weaknesses", []): st.write(f"- {w}")
-    
+    with col1: st.markdown("**Strengths:**"); [st.write(f"- {s}") for s in summary.get("strengths", [])]
+    with col2: st.markdown("**Weaknesses:**"); [st.write(f"- {w}") for w in summary.get("weaknesses", [])]
     pdf_buffer = generate_pdf(st.session_state.candidate_name, st.session_state.role, summary, st.session_state.questions, st.session_state.answers)
     st.download_button("Download PDF Report", pdf_buffer, f"{st.session_state.candidate_name}_Report.pdf", type="primary")
-
     if st.button("Start New Interview"):
-        keys_to_clear = list(st.session_state.keys())
-        for key in keys_to_clear:
-            if key not in ['authentication_status', 'name', 'username']:
-                del st.session_state[key]
+        keys_to_clear = [k for k in st.session_state.keys() if k not in ['authentication_status', 'name', 'username']]
+        for key in keys_to_clear: del st.session_state[key]
         st.rerun()
 
 # --- Main App Execution ---
-# The login form must be called on every run of the script
 name, authentication_status, username = authenticator.login('main')
-
-if st.session_state["authentication_status"]:
-    sidebar()
-    app_logic()
-elif st.session_state["authentication_status"] is False:
-    st.error('Username/password is incorrect')
-elif st.session_state["authentication_status"] is None:
-    st.warning('Please enter your username and password to access the AI Interviewer.')
+if st.session_state["authentication_status"]: sidebar(); app_logic()
+elif st.session_state["authentication_status"] is False: st.error('Username/password is incorrect')
+elif st.session_state["authentication_status"] is None: st.warning('Please enter your username and password to access the AI Interviewer.')
