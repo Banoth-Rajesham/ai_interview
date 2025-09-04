@@ -1,4 +1,10 @@
-# --- Core AI Logic ---
+import re
+import json
+import streamlit as st
+from utils import chat_completion # Import the specific function you need
+
+# This file contains the functions that interact with the LLM.
+
 def generate_questions(resume, role, experience, num_questions, model):
     prompt = f"""Generate {num_questions} diverse interview questions for a {role} ({experience}) based on this resume: {resume}. Return a JSON list of objects, each with 'text', 'topic', and 'difficulty' keys."""
     messages = [{"role": "user", "content": prompt}]
