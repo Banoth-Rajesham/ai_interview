@@ -164,7 +164,6 @@ def generate_pdf(name, role, summary, questions, answers):
     pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
     pdf.ln(10)
 
-    # Detailed Q&A Section (Fix)
     pdf.set_font('Arial', 'B', 14); write_text("Detailed Question & Answer Analysis")
     for i, (q, a) in enumerate(zip(questions, answers)):
         pdf.set_font('Arial', 'B', 12); write_text(f"Q{i+1}: {q['text']}")
