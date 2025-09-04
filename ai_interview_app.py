@@ -1,34 +1,17 @@
 import streamlit as st
-import openai
-import PyPDF2
-import io
-import json
-import os
-from fpdf import FPDF
-from datetime import datetime
-import re
-import av
-import base64
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
-import time
+import os
 
-# --- Page Config ---
-st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")
-
-# --- Constants ---
-MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
-SESSION_DIR = "saved_sessions"
-os.makedirs(SESSION_DIR, exist_ok=True)
-
-RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-)
+# --- Import all functions and classes from your other python files ---
+from utils import *
+from core_ai_logic import *
+from pdf_generator import *
+from ui_components import *
 
 # --- Top-Level Class Definition for WebRTC ---
-# The InterviewProcessor class is defined here at the top level to ensure it's stable.
+# CRITICAL FIX: This class MUST be defined in the main script to be stable.
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
@@ -58,3 +41,44 @@ authenticator = stauth.Authenticate(
     config['cookie']['key'],
     config['cookie']['expiry_days']
 )
+
+# --- Main App Execution Logic ---
+def app_logic():
+    st.title("🧠 AI Interviewer")
+    if "stage" not in st.session_state:
+        st.session_state.stage = "setup"
+    if st.session_state.stage == "setup":
+        setup_section(authenticator, config) # Pass authenticator and config
+    elif st.session_state.stage == "interview":
+        interview_section(authenticator, config, InterviewProcessor) # Pass the class
+    elif st.session_state.stage == "summary":
+        summary_section(authenticator, config)
+
+# Main entry point for the application
+if "authentication_status" not in st.session_state:
+    st.session_state.authentication_status = None
+
+if not st.session_state["authentication_status"]:
+    login_tab, register_tab = st.tabs(["Login", "Register"])
+    
+    with login_tab:
+        authenticator.login()
+        if st.session_state["authentication_status"]:
+            st.rerun()
+        elif st.session_state["authentication_status"] is False:
+            st.error('Username/password is incorrect')
+        elif st.session_state["authentication_status"] is None:
+            st.warning('Please enter your username and password.')
+
+    with register_tab:
+        st.subheader("Create a New Account")
+        try:
+            if authenticator.register_user(fields={'Form name': 'Create Account', 'Username': 'username', 'Name': 'name', 'Email': 'email', 'Password': 'password'}):
+                st.success('User registered successfully! Please go to the Login tab to sign in.')
+                with open('config.yaml', 'w') as file:
+                    yaml.dump(config, file, default_flow_style=False)
+        except Exception as e:
+            st.error(e)
+else:
+    sidebar(authenticator) # Pass authenticator
+    app_logic()
