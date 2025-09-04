@@ -340,4 +340,4 @@ def main():
         summary_section(st.session_state.candidate_name, st.session_state.role, st.session_state.experience, st.session_state.resume, st.session_state.questions, st.session_state.answers)
 
 if __name__ == "__main__":
-    main()```
+    main()
