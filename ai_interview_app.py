@@ -224,7 +224,9 @@ def interview_section():
             answer_text = transcribe_audio(full_audio_bytes)
             if answer_text:
                 st.info(f"**Transcribed Answer:** {answer_text}")
-                evaluation = evaluate_answer(.get('resume'), MODELS["GPT-4o"]); evaluation["answer"] = answer_text
+                # THIS IS THE CORRECTED LINE
+                evaluation = evaluate_answer(q, answer_text, st.session_state.get('resume'), MODELS["GPT-4o"])
+                evaluation["answer"] = answer_text
                 st.session_state.answers.append(evaluation); st.session_state.current_q += 1; st.session_state.proctoring_img = None
                 st.rerun()
             else: st.error("Transcription failed. Please try recording your answer again.")
@@ -245,35 +247,27 @@ def summary_section():
         st.rerun()
 
 # --- Main App Execution ---
-# Check if user is authenticated
 if "authentication_status" not in st.session_state:
     st.session_state.authentication_status = None
 
-# If not authenticated, show login/register page
 if not st.session_state["authentication_status"]:
     login_tab, register_tab = st.tabs(["Login", "Register"])
     
     with login_tab:
         authenticator.login()
-        if st.session_state["authentication_status"]:
-            st.rerun()
-        elif st.session_state["authentication_status"] is False:
-            st.error('Username/password is incorrect')
-        elif st.session_state["authentication_status"] is None:
-            st.warning('Please enter your username and password.')
+        if st.session_state["authentication_status"]: st.rerun()
+        elif st.session_state["authentication_status"] is False: st.error('Username/password is incorrect')
+        elif st.session_state["authentication_status"] is None: st.warning('Please enter your username and password.')
 
     with register_tab:
         st.subheader("Create a New Account")
         try:
-            # CORRECTED call to register_user (no 'preauthorization' argument)
             if authenticator.register_user(fields={'Form name': 'Create Account', 'Username': 'username', 'Name': 'name', 'Email': 'email', 'Password': 'password'}):
                 st.success('User registered successfully! Please go to the Login tab to sign in.')
-                # Update the config file with the new user
                 with open('config.yaml', 'w') as file:
                     yaml.dump(config, file, default_flow_style=False)
         except Exception as e:
             st.error(e)
 else:
-    # If authenticated, show the main app
     sidebar()
     app_logic()
