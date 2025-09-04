@@ -3,6 +3,8 @@ import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 import os
+import time
+import av # This import is needed for the class below
 
 # --- Import all functions and classes from your other python files ---
 from utils import *
@@ -48,11 +50,11 @@ def app_logic():
     if "stage" not in st.session_state:
         st.session_state.stage = "setup"
     if st.session_state.stage == "setup":
-        setup_section(authenticator, config) # Pass authenticator and config
+        setup_section()
     elif st.session_state.stage == "interview":
-        interview_section(authenticator, config, InterviewProcessor) # Pass the class
+        interview_section()
     elif st.session_state.stage == "summary":
-        summary_section(authenticator, config)
+        summary_section()
 
 # Main entry point for the application
 if "authentication_status" not in st.session_state:
@@ -80,5 +82,5 @@ if not st.session_state["authentication_status"]:
         except Exception as e:
             st.error(e)
 else:
-    sidebar(authenticator) # Pass authenticator
+    sidebar(authenticator)
     app_logic()
