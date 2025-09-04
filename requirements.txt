@@ -4,5 +4,3 @@ PyPDF2
 fpdf
 numpy
 streamlit-authenticator
-streamlit-audio-recorder
-# DO NOT include sqlite3 here!
