@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
-# Import functions from your other files
+# --- Corrected Import Statements ---
 from utils import get_openai_key, extract_text, text_to_speech, autoplay_audio, transcribe_audio
 from core_ai_logic import generate_questions, evaluate_answer, summarize_session
 from pdf_generator import generate_pdf
@@ -41,10 +41,7 @@ def setup_section():
             else:
                 st.warning("Please ensure all fields are complete and an API key is provided.")
 
-def interview_section():
-    # We need to get the InterviewProcessor class from the session state where the main app put it
-    InterviewProcessor = st.session_state.InterviewProcessor
-    
+def interview_section(InterviewProcessor): # It receives the class from the main app
     idx = st.session_state.current_q
     questions = st.session_state.get("questions", [])
     if not questions or idx >= len(questions):
