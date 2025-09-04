@@ -179,7 +179,7 @@ def sidebar():
     st.session_state["openai_api_key"] = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here")
 
 def app_logic():
-    st.title("🧠 AI Interviewer")
+    st.title("🧠 AI Interviewer (v2 - Corrected)") # <-- VISIBLE CHANGE TO CONFIRM UPDATE
     if "stage" not in st.session_state: st.session_state.stage = "setup"
     if st.session_state.stage == "setup": setup_section()
     elif st.session_state.stage == "interview": interview_section()
