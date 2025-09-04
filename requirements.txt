@@ -1,0 +1,8 @@
+# File 2: requirements.txt
+
+streamlit
+openai
+PyPDF2
+fpdf
+numpy
+streamlit-authenticator
