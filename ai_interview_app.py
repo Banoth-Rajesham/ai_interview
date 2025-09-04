@@ -27,6 +27,24 @@ RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
+# --- Class Definition (Moved to Top Level) ---
+# This class is now defined only once, fixing the TypeError.
+class InterviewProcessor:
+    def __init__(self):
+        self.audio_buffer = []
+        self.last_proctor_time = time.time()
+
+    def recv(self, frame):
+        if isinstance(frame, av.AudioFrame):
+            self.audio_buffer.append(frame.to_ndarray().tobytes())
+            return frame
+        elif isinstance(frame, av.VideoFrame):
+            # Take a snapshot for proctoring every 10 seconds
+            if time.time() - self.last_proctor_time > 10:
+                st.session_state.proctoring_img = frame.to_image()
+                self.last_proctor_time = time.time()
+            return frame
+
 # --- User Authentication ---
 if not os.path.exists('config.yaml'):
     st.error("Fatal Error: `config.yaml` not found. Please create the configuration file.")
@@ -137,7 +155,7 @@ class PDF(FPDF):
     def header(self): self.set_font('Arial', 'B', 12); self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
     def footer(self): self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-def generate_pdf(name, role, summary, questions, answers):
+def generate_pdf(name, role, summary):
     pdf = PDF()
     pdf.add_page()
     def write_text(text): pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
@@ -201,15 +219,13 @@ def interview_section():
         st.markdown("#### Candidate Live Feed")
         if "audio_buffer" not in st.session_state: st.session_state.audio_buffer = []
         if "proctoring_img" not in st.session_state: st.session_state.proctoring_img = None
-        class InterviewProcessor:
-            def __init__(self): self.audio_buffer = []; self.last_proctor_time = time.time()
-            def recv(self, frame):
-                if isinstance(frame, av.AudioFrame): self.audio_buffer.append(frame.to_ndarray().tobytes()); return frame
-                elif isinstance(frame, av.VideoFrame):
-                    if time.time() - self.last_proctor_time > 10: st.session_state.proctoring_img = frame.to_image(); self.last_proctor_time = time.time()
-                    return frame
+        
         webrtc_ctx = webrtc_streamer(key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV, rtc_configuration=RTC_CONFIGURATION, media_stream_constraints={"video": True, "audio": True}, processor_factory=InterviewProcessor, async_processing=True)
-        if webrtc_ctx.state.playing and webrtc_ctx.processor: st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer); webrtc_ctx.processor.audio_buffer.clear()
+        
+        if webrtc_ctx.state.playing and webrtc_ctx.processor:
+            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
+            webrtc_ctx.processor.audio_buffer.clear()
+
     with col2:
         st.markdown("#### Proctoring Snapshot")
         if st.session_state.proctoring_img: st.image(st.session_state.proctoring_img, caption=f"Snapshot at {datetime.now().strftime('%H:%M:%S')}")
@@ -217,19 +233,26 @@ def interview_section():
 
     st.markdown("---")
     if st.button("Stop and Submit Answer", type="primary"):
-        if webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor: st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
+        if webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
+            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
+        
         if not st.session_state.audio_buffer: st.warning("Please record an answer before submitting."); return
-        full_audio_bytes = b"".join(st.session_state.audio_buffer); st.session_state.audio_buffer = []
+        
+        full_audio_bytes = b"".join(st.session_state.audio_buffer)
+        st.session_state.audio_buffer = []
+        
         with st.spinner("Transcribing and evaluating your answer..."):
             answer_text = transcribe_audio(full_audio_bytes)
             if answer_text:
                 st.info(f"**Transcribed Answer:** {answer_text}")
-                # THIS IS THE CORRECTED LINE
                 evaluation = evaluate_answer(q, answer_text, st.session_state.get('resume'), MODELS["GPT-4o"])
                 evaluation["answer"] = answer_text
-                st.session_state.answers.append(evaluation); st.session_state.current_q += 1; st.session_state.proctoring_img = None
+                st.session_state.answers.append(evaluation)
+                st.session_state.current_q += 1
+                st.session_state.proctoring_img = None
                 st.rerun()
-            else: st.error("Transcription failed. Please try recording your answer again.")
+            else:
+                st.error("Transcription failed. Please try recording your answer again.")
 
 def summary_section():
     st.header("Step 3: Interview Summary")
@@ -239,7 +262,7 @@ def summary_section():
     col1, col2 = st.columns(2)
     with col1: st.markdown("**Strengths:**"); [st.write(f"- {s}") for s in summary.get("strengths", [])]
     with col2: st.markdown("**Weaknesses:**"); [st.write(f"- {w}") for w in summary.get("weaknesses", [])]
-    pdf_buffer = generate_pdf(st.session_state.candidate_name, st.session_state.role, summary, st.session_state.questions, st.session_state.answers)
+    pdf_buffer = generate_pdf(st.session_state.candidate_name, st.session_state.role, summary)
     st.download_button("Download PDF Report", pdf_buffer, f"{st.session_state.candidate_name}_Report.pdf", type="primary")
     if st.button("Start New Interview"):
         keys_to_clear = [k for k in st.session_state.keys() if k not in ['authentication_status', 'name', 'username']]
