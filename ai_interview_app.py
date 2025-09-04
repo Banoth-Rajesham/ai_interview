@@ -1,5 +1,3 @@
-# File 1: ai_interview_app.py
-
 """
 ai_interview_app.py
 
@@ -18,13 +16,13 @@ Setup:
 1. pip install -r requirements.txt
 2. Run:
    streamlit run ai_interview_app.py
-3. Provide your OpenAI API Key in the sidebar.
+3. Provide your OpenAI API Key in the sidebar or set as an environment variable.
 
 Features:
-- User login / registration (basic)
+- User login / registration (basic, demo accounts)
 - Resume upload or demo mode
 - GPT-generated interview questions (personalized)
-- Voice question playback and speech-to-text answers with fallback to text input
+- Voice playback and speech-to-text answers (Whisper API) with fallback to text
 - GPT scoring, feedback, model answers
 - Downloadable PDF report and JSON export
 - Session saving in SQLite and JSON
@@ -491,7 +489,12 @@ def ui_summary_and_export(username, candidate_name, role, exp_level, resume_text
 def auth_login():
     names = ["Alice", "Bob", "Carol"]
     usernames = ["alice", "bob", "carol"]
-    passwords = stauth.Hasher(["123", "abc", "xyz"]).generate()
+    # Pre-generated password hashes for "123", "abc", "xyz"
+    passwords = [
+        '$2b$12$CAZ4rUYKp3RKMzuiFKGPO.FFVWSSxa6ZPGnaAulyi6iryVyU8uiIS',
+        '$2b$12$yCFD8Pv/WGS0LvpGBOSmyuWT.ZMJxw7AgtbKaaOyakexwMRglTcSO',
+        '$2b$12$WWMNcfbXUgBraQjbqoSLse6RuNRCUnhotv5PWmlW.S7KBoZ2ziOYq'
+    ]
     authenticator = stauth.Authenticate(
         names, usernames, passwords,
         "interview_app_cookie", "interview_app_signature", cookie_expiry_days=30
