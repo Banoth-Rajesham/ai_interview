@@ -486,23 +486,35 @@ def ui_summary_and_export(username, candidate_name, role, exp_level, resume_text
         st.success("Session saved!")
 
 # === Authentication Setup ===
+# === Authentication Setup ===
 def auth_login():
-    names = ["Alice", "Bob", "Carol"]
-    usernames = ["alice", "bob", "carol"]
-    passwords = [
-        '$2b$12$CAZ4rUYKp3RKMzuiFKGPO.FFVWSSxa6ZPGnaAulyi6iryVyU8uiIS',
-        '$2b$12$yCFD8Pv/WGS0LvpGBOSmyuWT.ZMJxw7AgtbKaaOyakexwMRglTcSO',
-        '$2b$12$WWMNcfbXUgBraQjbqoSLse6RuNRCUnhotv5PWmlW.S7KBoZ2ziOYq'
-    ]
+    # Define credentials in new format
+    credentials = {
+        "usernames": {
+            "alice": {
+                "name": "Alice",
+                "password": "$2b$12$CAZ4rUYKp3RKMzuiFKGPO.FFVWSSxa6ZPGnaAulyi6iryVyU8uiIS"
+            },
+            "bob": {
+                "name": "Bob",
+                "password": "$2b$12$yCFD8Pv/WGS0LvpGBOSmyuWT.ZMJxw7AgtbKaaOyakexwMRglTcSO"
+            },
+            "carol": {
+                "name": "Carol",
+                "password": "$2b$12$WWMNcfbXUgBraQjbqoSLse6RuNRCUnhotv5PWmlW.S7KBoZ2ziOYq"
+            }
+        }
+    }
+
     authenticator = stauth.Authenticate(
-        names,
-        usernames,
-        passwords,
+        credentials,
         "interview_app_cookie",
         "interview_app_signature",
-        30
+        cookie_expiry_days=30
     )
+
     name, auth_status, username = authenticator.login("Login", "main")
+
     if auth_status:
         st.session_state["username"] = username
         return authenticator, username
@@ -511,6 +523,7 @@ def auth_login():
     elif auth_status is None:
         st.warning("Please enter your credentials")
     return authenticator, None
+
 
 
 # === Main App === #
