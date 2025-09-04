@@ -28,7 +28,7 @@ RTC_CONFIGURATION = RTCConfiguration(
 )
 
 # --- Class Definition (Moved to Top Level) ---
-# This class is now defined only once, fixing the TypeError.
+# This class is now defined only once, outside any function, which fixes the TypeError.
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
@@ -155,13 +155,22 @@ class PDF(FPDF):
     def header(self): self.set_font('Arial', 'B', 12); self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
     def footer(self): self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-def generate_pdf(name, role, summary):
+def generate_pdf(name, role, summary, questions, answers):
     pdf = PDF()
     pdf.add_page()
     def write_text(text): pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
+    
     pdf.set_font('Arial', 'B', 16); write_text(f"Candidate: {name}")
     pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
     pdf.ln(10)
+
+    # Detailed Q&A Section (Fix)
+    pdf.set_font('Arial', 'B', 14); write_text("Detailed Question & Answer Analysis")
+    for i, (q, a) in enumerate(zip(questions, answers)):
+        pdf.set_font('Arial', 'B', 12); write_text(f"Q{i+1}: {q['text']}")
+        pdf.set_font('Arial', '', 12); write_text(f"Answer: {a['answer']}")
+        pdf.set_font('Arial', 'I', 12); write_text(f"Feedback: {a['feedback']} (Score: {a['score']}/10)"); pdf.ln(10)
+
     return pdf.output(dest='S').encode('latin-1')
 
 # --- Main Application UI ---
@@ -262,7 +271,7 @@ def summary_section():
     col1, col2 = st.columns(2)
     with col1: st.markdown("**Strengths:**"); [st.write(f"- {s}") for s in summary.get("strengths", [])]
     with col2: st.markdown("**Weaknesses:**"); [st.write(f"- {w}") for w in summary.get("weaknesses", [])]
-    pdf_buffer = generate_pdf(st.session_state.candidate_name, st.session_state.role, summary)
+    pdf_buffer = generate_pdf(st.session_state.candidate_name, st.session_state.role, summary, st.session_state.questions, st.session_state.answers)
     st.download_button("Download PDF Report", pdf_buffer, f"{st.session_state.candidate_name}_Report.pdf", type="primary")
     if st.button("Start New Interview"):
         keys_to_clear = [k for k in st.session_state.keys() if k not in ['authentication_status', 'name', 'username']]
