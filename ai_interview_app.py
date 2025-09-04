@@ -29,7 +29,7 @@ RTC_CONFIGURATION = RTCConfiguration(
 
 # --------------------------------------------------------------------------------
 # CRITICAL FIX: The InterviewProcessor class is now at the top-level (global scope).
-# This ensures it is defined only ONCE and fixes the stubborn TypeError.
+# This ensures it is defined only ONCE and is stable across Streamlit reruns.
 # --------------------------------------------------------------------------------
 class InterviewProcessor:
     def __init__(self):
