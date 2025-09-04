@@ -489,17 +489,18 @@ def ui_summary_and_export(username, candidate_name, role, exp_level, resume_text
 def auth_login():
     names = ["Alice", "Bob", "Carol"]
     usernames = ["alice", "bob", "carol"]
-    # Pre-generated password hashes for "123", "abc", "xyz"
     passwords = [
         '$2b$12$CAZ4rUYKp3RKMzuiFKGPO.FFVWSSxa6ZPGnaAulyi6iryVyU8uiIS',
         '$2b$12$yCFD8Pv/WGS0LvpGBOSmyuWT.ZMJxw7AgtbKaaOyakexwMRglTcSO',
         '$2b$12$WWMNcfbXUgBraQjbqoSLse6RuNRCUnhotv5PWmlW.S7KBoZ2ziOYq'
     ]
     authenticator = stauth.Authenticate(
-        names, usernames, passwords,
-        cookie_name="interview_app_cookie",
-        key="interview_app_signature",
-        cookie_expiry_days=30
+        names,
+        usernames,
+        passwords,
+        "interview_app_cookie",
+        "interview_app_signature",
+        30
     )
     name, auth_status, username = authenticator.login("Login", "main")
     if auth_status:
@@ -510,6 +511,7 @@ def auth_login():
     elif auth_status is None:
         st.warning("Please enter your credentials")
     return authenticator, None
+
 
 # === Main App === #
 def main():
