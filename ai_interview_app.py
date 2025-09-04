@@ -1,10 +1,3 @@
-"""
-ai_interview_noauth.py
-Streamlit AI Interviewer App without login,
-without audio recording (text input only),
-with GPT evaluation, PDF and JSON export.
-"""
-
 import streamlit as st
 import openai
 import PyPDF2
@@ -16,7 +9,7 @@ from datetime import datetime
 import re
 import ast
 
-# --- Config ---
+# --- Constants and Config ---
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
 DEFAULT_DEMO = """
 John Smith
@@ -32,56 +25,63 @@ Achievements:
 - Published paper in IEEE AI Conference.
 - Lead developer for open source project with 1,000+ stars.
 """
-
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
 
-# --- Helpers ---
+# --- Helper Functions ---
 
-def get_api_key():
+def get_openai_key():
+    # 1. Try session state (sidebar input)
     key = st.session_state.get("openai_api_key", "")
-    if not key:
-        key = os.getenv("OPENAI_API_KEY", "")
-    return key
+    if key:
+        return key
+    # 2. Try Streamlit Secrets (recommended secure method)
+    if "OPENAI_API_KEY" in st.secrets:
+        return st.secrets["OPENAI_API_KEY"]
+    # 3. Try environment variables
+    return os.getenv("OPENAI_API_KEY", "")
 
-def extract_text(file):
-    if file.name.lower().endswith(".pdf"):
-        reader = PyPDF2.PdfReader(file)
+def extract_text_from_file(uploaded_file):
+    if uploaded_file.name.lower().endswith(".pdf"):
+        reader = PyPDF2.PdfReader(uploaded_file)
         text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
+        for p in reader.pages:
+            text += p.extract_text() or ""
         return clean_text(text)
-    elif file.name.lower().endswith(".txt"):
-        return clean_text(file.read().decode())
+    elif uploaded_file.name.lower().endswith(".txt"):
+        return clean_text(uploaded_file.read().decode())
     else:
-        st.error("Only PDF and TXT files supported.")
+        st.error("Unsupported file type. Upload PDF or TXT.")
         return ""
 
 def clean_text(text):
     return "\n".join(line.strip() for line in text.splitlines() if line.strip())
 
-def call_openai_chat(messages, model="gpt-4o", temperature=0.3, max_tokens=1200):
-    key = get_api_key()
+def openai_client():
+    key = get_openai_key()
     if not key:
-        st.error("Please provide your OpenAI API key in the sidebar.")
+        st.error("OpenAI API key not found! Please add it in sidebar or in streamlit secrets.")
         st.stop()
-    openai.api_key = key
+    return openai.OpenAI(api_key=key)
+
+def openai_chat(messages, model="gpt-4o", temperature=0.3, max_tokens=1200):
+    client = openai_client()
     try:
-        return openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens
         )
+        return response
     except Exception as e:
         st.error(f"OpenAI API error: {e}")
         st.stop()
 
-def gen_questions(resume, role, exp, count, model):
+def generate_questions(resume, role, exp, count, model):
     prompt = f"""
-You are an expert interviewer. Based on this resume and the role '{role}' with experience '{exp}', generate exactly {count} interview questions in JSON array format.
-Include at least 2 personalized questions based on the resume.
-Each question should have fields: id (int), text, topic, difficulty, estimated_time_seconds.
+You are an expert interviewer. Based on this resume and the role '{role}' with experience '{exp}', generate exactly {count} interview questions as a JSON array.
+Include at least two personalized questions based on the resume. Fields: id, text, topic, difficulty (Easy/Medium/Hard), estimated_time_seconds.
 Resume:
 {resume}
 """
@@ -89,7 +89,7 @@ Resume:
         {"role": "system", "content": "You generate interview questions."},
         {"role": "user", "content": prompt}
     ]
-    resp = call_openai_chat(messages, model=model, max_tokens=2000)
+    resp = openai_chat(messages, model=model, max_tokens=2000)
     raw = resp.choices[0].message.content
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if match:
@@ -105,47 +105,47 @@ Resume:
                     q["id"] = i + 1
                 return questions
             except:
-                st.error("Unable to parse questions JSON.")
-    st.error("Failed to generate questions.")
+                st.error("Failed to parse questions JSON.")
+    st.error("Could not generate interview questions.")
     return []
 
 def evaluate_answer(question, answer, resume, model):
     prompt = f"""
-Evaluate this answer strictly:
+You are an interviewer evaluating this answer:
 Question: {question['text']}
-Candidate's answer: {answer}
-Candidate resume:
+Answer: {answer}
+Resume:
 {resume}
-Return JSON with: score (0-10), justification, 3 improvements, model answer.
+Provide JSON: score (0-10), justification, improvements [3], model answer.
 """
     messages = [
         {"role": "system", "content": "You evaluate interview answers."},
         {"role": "user", "content": prompt}
     ]
-    resp = call_openai_chat(messages, model=model, max_tokens=700)
+    resp = openai_chat(messages, model=model, max_tokens=700)
     raw = resp.choices[0].message.content
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         try:
-            res = json.loads(match.group())
-            res["score"] = int(res.get("score", 0))
-            res["improvements"] = res.get("improvements", [])[:3]
-            return res
+            evaluation = json.loads(match.group())
+            evaluation["score"] = int(evaluation.get("score", 0))
+            evaluation["improvements"] = evaluation.get("improvements", [])[:3]
+            return evaluation
         except:
             try:
-                res = ast.literal_eval(match.group())
-                res["score"] = int(res.get("score", 0))
-                res["improvements"] = res.get("improvements", [])[:3]
-                return res
+                evaluation = ast.literal_eval(match.group())
+                evaluation["score"] = int(evaluation.get("score", 0))
+                evaluation["improvements"] = evaluation.get("improvements", [])[:3]
+                return evaluation
             except:
-                return {"score":0, "justification":"Parse failure", "improvements":[], "model_answer":""}
-    return {"score":0, "justification":"Evaluation failed", "improvements":[], "model_answer":""}
+                return {"score": 0, "justification": "Parse failure", "improvements": [], "model_answer": ""}
+    return {"score": 0, "justification": "Evaluation failed", "improvements": [], "model_answer": ""}
 
 def summarize_session(questions, evals, resume, model):
-    items = []
+    results = []
     for i, q in enumerate(questions):
         ev = evals[i] if i < len(evals) else {}
-        items.append({
+        results.append({
             "question": q["text"],
             "score": ev.get("score", 0),
             "justification": ev.get("justification", ""),
@@ -154,17 +154,17 @@ def summarize_session(questions, evals, resume, model):
             "model_answer": ev.get("model_answer", "")
         })
     prompt = f"""
-Summarize interview results strictly:
-{json.dumps(items, indent=2)}
+Summarize the interview results:
+{json.dumps(results, indent=2)}
 Candidate resume:
 {resume}
-Return JSON with: overall_score (0-10 int), strengths ([]), weaknesses ([]), recommendation (Yes/No/Maybe), next_steps ([]).
+Return JSON with: overall_score (0-10 int), strengths ([]), weaknesses ([]), recommendation ("Yes"/"No"/"Maybe"), next_steps ([]).
 """
     messages = [
         {"role": "system", "content": "You summarize interview sessions."},
         {"role": "user", "content": prompt}
     ]
-    resp = call_openai_chat(messages, model=model, max_tokens=600)
+    resp = openai_chat(messages, model=model, max_tokens=600)
     raw = resp.choices[0].message.content
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
@@ -207,7 +207,7 @@ def generate_pdf(name, role, exp, questions, evals, summary):
     pdf.cell(0, 10, "Summary:", 0, 1)
 
     pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, f"Overall Score: {summary.get('overall_score', '-')} / 10", 0, 1)
+    pdf.cell(0, 10, f"Overall Score: {summary.get('overall_score', '-')}/10", 0, 1)
     pdf.multi_cell(0, 10, f"Strengths: {'; '.join(summary.get('strengths', []))}")
     pdf.multi_cell(0, 10, f"Weaknesses: {'; '.join(summary.get('weaknesses', []))}")
     pdf.multi_cell(0, 10, f"Recommendation: {summary.get('recommendation', '')}")
@@ -234,7 +234,7 @@ def make_session_json(name, role, exp, resume, questions, evals):
 
 def sidebar_ui():
     st.sidebar.header("Settings & API Key")
-    key = st.sidebar.text_input("OpenAI API Key", type="password", help="Enter your OpenAI API Key")
+    key = st.sidebar.text_input("OpenAI API Key", type="password", help="Enter your OpenAI API key")
     st.session_state["openai_api_key"] = key
     st.sidebar.markdown("---")
 
@@ -244,19 +244,19 @@ def resume_upload_ui():
     use_demo = st.checkbox("Use Demo Resume")
     if uploaded_file:
         try:
-            txt = extract_text(uploaded_file)
-            st.success("Resume successfully loaded")
+            txt = extract_text_from_file(uploaded_file)
+            st.success("Resume loaded successfully.")
             st.text_area("Resume Preview", txt, height=200)
             return txt
         except Exception as e:
-            st.error(f"Resume loading failed: {e}")
+            st.error(f"Error loading resume: {e}")
             return None
     elif use_demo:
         st.info("Using demo resume")
         st.text_area("Resume Preview", DEFAULT_DEMO, height=200)
         return DEFAULT_DEMO
     else:
-        st.warning("Please upload a resume or select demo resume to continue.")
+        st.warning("Please upload a resume or select demo resume.")
         return None
 
 def candidate_info_ui():
@@ -270,7 +270,6 @@ def candidate_info_ui():
 
 def interview_ui(questions, resume, model):
     st.header("Step 3: Interview")
-
     if "current_question" not in st.session_state:
         st.session_state["current_question"] = 0
         st.session_state["evaluations"] = []
@@ -281,31 +280,31 @@ def interview_ui(questions, resume, model):
         st.success("Interview complete!")
         return st.session_state["evaluations"]
 
-    q = questions[idx]
-    st.subheader(f"Question {idx+1} [{q.get('topic','')} | {q.get('difficulty','')}]")
-    st.write(q["text"])
+    question = questions[idx]
+    st.subheader(f"Question {idx+1} [{question.get('topic','')} | {question.get('difficulty','')}]")
+    st.write(question["text"])
+
     answer = st.text_area("Your answer", key=f"answer_{idx}", height=150)
 
     if st.button("Submit Answer", key=f"submit_{idx}"):
         if not answer.strip():
-            st.warning("Please enter an answer.")
+            st.warning("Please provide your answer before submitting.")
             st.stop()
         with st.spinner("Evaluating answer..."):
-            ev = evaluate_answer(q, answer.strip(), resume, model)
+            ev = evaluate_answer(question, answer.strip(), resume, model)
             ev["answer"] = answer.strip()
-        evals = st.session_state["evaluations"]
-        evals.append(ev)
-        st.session_state["evaluations"] = evals
+        st.session_state["evaluations"].append(ev)
         st.session_state["current_question"] += 1
         st.experimental_rerun()
 
     st.info("Submit your answer by clicking the button above.")
 
-def summary_ui(name, role, exp, resume, questions, evals):
-    st.header("Step 4: Summary & Export")
-    summary = summarize_session(questions, evals, resume, st.session_state.get("model", "gpt-4o"))
+def summary_ui(name, role, exp, resume, questions, evaluations):
+    st.header("Step 4: Summary and Export")
+    summary = summarize_session(questions, evaluations, resume, st.session_state.get("model", "gpt-4o"))
 
-    st.subheader(f"Overall Score: {summary.get('overall_score','-')}/10")
+    st.subheader(f"Overall Score: {summary.get('overall_score','-')} / 10")
+
     st.markdown("**Strengths:**")
     for s in summary.get("strengths", []):
         st.write(f"- {s}")
@@ -320,19 +319,19 @@ def summary_ui(name, role, exp, resume, questions, evals):
     for ns in summary.get("next_steps", []):
         st.write(f"- {ns}")
 
-    pdf_buffer = generate_pdf(name, role, exp, questions, evals, summary)
+    pdf_buf = generate_pdf(name, role, exp, questions, evaluations, summary)
     st.download_button(
         "Download PDF Report",
-        pdf_buffer,
+        pdf_buf,
         file_name=f"{name.replace(' ','_')}_Interview_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
         mime="application/pdf",
     )
 
-    session_json = make_session_json(name, role, exp, resume, questions, evals)
-    session_bytes = json.dumps(session_json, indent=2).encode()
+    session_json = make_session_json(name, role, exp, resume, questions, evaluations)
+    json_bytes = json.dumps(session_json, indent=2).encode()
     st.download_button(
         "Download Session JSON",
-        session_bytes,
+        json_bytes,
         file_name=f"{name.replace(' ','_')}_Interview_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
         mime="application/json",
     )
@@ -344,15 +343,15 @@ def summary_ui(name, role, exp, resume, questions, evals):
         )
         with open(filepath, "w") as f:
             json.dump(session_json, f, indent=2)
-        st.success("Session saved successfully! Please restart app for a new session.")
-        # Clear session to start fresh next time
+        st.success("Session saved successfully! Please restart the app for a new session.")
+        # Clear state to start fresh next time
         for key in ["current_question", "evaluations", "questions", "resume", "candidate_name", "role", "experience"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.stop()
 
 def main():
-    st.set_page_config(page_title="AI Interviewer", layout="wide")
+    st.set_page_config(page_title="AI Interviewer", layout="wide", page_icon="🤖")
     sidebar_ui()
 
     if "resume" not in st.session_state:
@@ -374,7 +373,7 @@ def main():
 
     if "questions" not in st.session_state:
         with st.spinner("Generating interview questions..."):
-            questions = gen_questions(
+            questions = generate_questions(
                 st.session_state["resume"],
                 st.session_state["role"],
                 st.session_state["experience"],
@@ -382,7 +381,7 @@ def main():
                 st.session_state["model"],
             )
         if not questions:
-            st.error("Failed to generate questions. Please check your inputs and API key.")
+            st.error("Failed to generate interview questions.")
             st.stop()
         st.session_state["questions"] = questions
 
