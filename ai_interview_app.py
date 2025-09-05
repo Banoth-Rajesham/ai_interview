@@ -205,28 +205,43 @@ def setup_section():
             else:
                 st.warning("Please ensure all fields are complete and an API key is provided.")
 
+# --- REPLACE THIS ENTIRE FUNCTION IN ai_interview_app.py ---
+
 def interview_section():
     idx = st.session_state.current_q
     questions = st.session_state.get("questions", [])
-    if not questions or idx >= len(questions): st.session_state.stage = "summary"; st.rerun()
+    if not questions or idx >= len(questions):
+        st.session_state.stage = "summary"
+        st.rerun()
 
     q = questions[idx]
-    st.header(f"Question {idx+1}/{len(questions)}: {q['topic']} ({q['difficulty']})"); st.subheader(q['text'])
+    st.header(f"Question {idx+1}/{len(questions)}: {q['topic']} ({q['difficulty']})")
+    st.subheader(q['text'])
 
     if f"tts_{idx}" not in st.session_state:
         with st.spinner("Generating audio..."):
             audio_response = text_to_speech(q['text'])
             st.session_state[f"tts_{idx}"] = audio_response.content if audio_response else None
-    if st.session_state[f"tts_{idx}"]: autoplay_audio(st.session_state[f"tts_{idx}"])
+    if st.session_state.get(f"tts_{idx}"):
+        autoplay_audio(st.session_state[f"tts_{idx}"])
 
     st.markdown("---")
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("#### Candidate Live Feed")
-        if "audio_buffer" not in st.session_state: st.session_state.audio_buffer = []
-        if "proctoring_img" not in st.session_state: st.session_state.proctoring_img = None
+        if "audio_buffer" not in st.session_state:
+            st.session_state.audio_buffer = []
+        if "proctoring_img" not in st.session_state:
+            st.session_state.proctoring_img = None
         
-        webrtc_ctx = webrtc_streamer(key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV, rtc_configuration=RTC_CONFIGURATION, media_stream_constraints={"video": True, "audio": True}, processor_factory=InterviewProcessor, async_processing=True)
+        # This is the line from the error (line 229) - now corrected and simplified
+        webrtc_ctx = webrtc_streamer(
+            key=f"interview_cam_{idx}",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIGURATION,
+            media_stream_constraints={"video": True, "audio": True},
+            processor_factory=InterviewProcessor
+        )
         
         if webrtc_ctx.state.playing and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
@@ -234,15 +249,19 @@ def interview_section():
 
     with col2:
         st.markdown("#### Proctoring Snapshot")
-        if st.session_state.proctoring_img: st.image(st.session_state.proctoring_img, caption=f"Snapshot at {datetime.now().strftime('%H:%M:%S')}")
-        else: st.info("Waiting for first candidate snapshot...")
+        if st.session_state.proctoring_img:
+            st.image(st.session_state.proctoring_img, caption=f"Snapshot at {datetime.now().strftime('%H:%M:%S')}")
+        else:
+            st.info("Waiting for first candidate snapshot...")
 
     st.markdown("---")
     if st.button("Stop and Submit Answer", type="primary"):
         if webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
         
-        if not st.session_state.audio_buffer: st.warning("Please record an answer before submitting."); return
+        if not st.session_state.audio_buffer:
+            st.warning("Please record an answer before submitting.")
+            return
         
         full_audio_bytes = b"".join(st.session_state.audio_buffer)
         st.session_state.audio_buffer = []
