@@ -262,9 +262,45 @@ def app_logic():
 # ------------------------------
 # 13. SECTIONS (Setup → Interview → Summary)
 # ------------------------------
-def setup_section(): ...
-def interview_section(): ...
-def summary_section(): ...
+def setup_section():
+    st.subheader("📄 Setup Interview")
+    role = st.text_input("Job Role", "Data Scientist")
+    exp = st.selectbox("Experience Level", ["Fresher", "Mid-level", "Senior"])
+    resume = st.file_uploader("Upload Resume (PDF/TXT)", type=["pdf", "txt"])
+    if st.button("Start Interview") and resume:
+        st.session_state.resume_text = extract_text(resume)
+        st.session_state.role = role
+        st.session_state.exp = exp
+        st.session_state.stage = "interview"
+        st.experimental_rerun()
+
+
+def interview_section():
+    st.subheader("🎥 Live Interview")
+    st.write("Your camera & microphone will start below:")
+
+    webrtc_streamer(
+        key="interview_cam",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=RTC_CONFIGURATION,
+        media_stream_constraints={"video": True, "audio": True},
+        video_processor_factory=InterviewProcessor,
+        async_processing=True,
+    )
+
+    if st.button("Finish Interview"):
+        st.session_state.stage = "summary"
+        st.experimental_rerun()
+
+
+def summary_section():
+    st.subheader("📊 Interview Summary")
+    st.success("This is where the AI-generated report will appear.")
+
+    if st.button("Restart"):
+        st.session_state.stage = "setup"
+        st.experimental_rerun()
+
 
 
 # ------------------------------
