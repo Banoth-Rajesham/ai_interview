@@ -239,12 +239,16 @@ def interview_section():
     q = questions[idx]
     st.header(f"Question {idx+1}/{len(questions)}: {q['topic']} ({q['difficulty']})")
     st.subheader(q['text'])
+
     if f"tts_{idx}" not in st.session_state:
         with st.spinner("Generating audio..."):
             audio_response = text_to_speech(q['text'])
             st.session_state[f"tts_{idx}"] = audio_response.content if audio_response else None
+
     if st.session_state.get(f"tts_{idx}"):
         autoplay_audio(st.session_state[f"tts_{idx}"])
+
+    # --- UI and video streaming ---
     st.markdown("---")
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -253,14 +257,14 @@ def interview_section():
             st.session_state.audio_buffer = []
         if "proctoring_img" not in st.session_state:
             st.session_state.proctoring_img = None
-
-        webrtc_ctx=webrtc_streamer(
-            key=f"interview_{st.session_state.current_q}",
-            media_stream_constraints={"video": True, "audio": True}
-            )
-
-
-        if webrtc_ctx.state.playing and webrtc_ctx.processor:
+        webrtc_ctx = webrtc_streamer(
+            key=f"interview_cam_{idx}",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIGURATION,
+            media_stream_constraints={"video": True, "audio": True},
+            processor_factory=InterviewProcessor,
+        )
+        if webrtc_ctx and webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
             webrtc_ctx.processor.audio_buffer.clear()
     with col2:
@@ -269,27 +273,39 @@ def interview_section():
             st.image(st.session_state.proctoring_img, caption=f"Snapshot at {datetime.now().strftime('%H:%M:%S')}")
         else:
             st.info("Waiting for first candidate snapshot...")
+
     st.markdown("---")
-    if st.button("Stop and Submit Answer", type="primary"):
-        if webrtc_ctx.state.playing and webrtc_ctx.processor:
-            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
-        if not st.session_state.audio_buffer:
-            st.warning("Please record an answer before submitting.")
-            return
-        full_audio_bytes = b"".join(st.session_state.audio_buffer)
-        st.session_state.audio_buffer = []
-        with st.spinner("Transcribing and evaluating your answer..."):
-            answer_text = transcribe_audio(full_audio_bytes)
-            if answer_text:
-                st.info(f"**Transcribed Answer:** {answer_text}")
-                evaluation = evaluate_answer(q, answer_text, st.session_state.get('resume'), MODELS["GPT-4o"])
-                evaluation["answer"] = answer_text
-                st.session_state.answers.append(evaluation)
-                st.session_state.current_q += 1
-                st.session_state.proctoring_img = None
-                st.experimental_rerun()
+    # Textarea for answer input
+    answer = st.text_area("Your Answer:")
+
+    # Buttons: Submit and Skip
+    col_submit, col_skip = st.columns(2)
+    with col_submit:
+        if st.button("Stop and Submit Answer"):
+            if webrtc_ctx and webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
+                st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
+            if not st.session_state.audio_buffer and not answer.strip():
+                st.warning("Please record or enter an answer before submitting.")
             else:
-                st.error("Transcription failed. Please try recording your answer again.")
+                full_audio_bytes = b"".join(st.session_state.audio_buffer) if st.session_state.audio_buffer else b""
+                st.session_state.audio_buffer = []
+                with st.spinner("Transcribing and evaluating your answer..."):
+                    answer_text = transcribe_audio(full_audio_bytes) if full_audio_bytes else answer
+                    if answer_text:
+                        st.info(f"**Answer recorded:** {answer_text}")
+                        evaluation = evaluate_answer(q, answer_text, st.session_state.get('resume'), MODELS["GPT-4o"])
+                        evaluation["answer"] = answer_text
+                        st.session_state.answers.append(evaluation)
+                        st.session_state.current_q += 1
+                        st.session_state.proctoring_img = None
+                        st.experimental_rerun()
+                    else:
+                        st.error("Transcription failed. Please try again.")
+    with col_skip:
+        if st.button("Skip Question"):
+            st.session_state.current_q += 1
+            st.session_state.proctoring_img = None
+            st.experimental_rerun()
 
 def summary_section():
     st.header("Step 3: Interview Summary")
