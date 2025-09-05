@@ -14,18 +14,20 @@ import base64
 import numpy as np  
 import wave  
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase  
-from streamlit_oauth2 import OAuth2Component  # Correct Google OAuth2 package  
+from streamlit_oauth2 import OAuth2Component  
 import yaml  
 from yaml.loader import SafeLoader  
 
 # 2) CONFIG & CONSTANTS  
 st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")  
+
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}  
 SESSION_DIR = "saved_sessions"  
 os.makedirs(SESSION_DIR, exist_ok=True)  
+
 RTC_CONFIGURATION = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})  
 
-# Your Google OAuth2 credentials here  
+# Replace these with your actual Google OAuth2 credentials  
 GOOGLE_CLIENT_ID = "your-google-client-id.apps.googleusercontent.com"  
 GOOGLE_CLIENT_SECRET = "your-google-client-secret"  
 REDIRECT_URI = "http://localhost:8501/"  # Change to your deployed URL  
@@ -38,7 +40,7 @@ oauth = OAuth2Component(
     scope=["openid", "email", "profile"],  
 )  
 
-# 3) Video processor (subclass VideoProcessorBase)  
+# 3) Video processor for proctoring snapshots  
 class InterviewProcessor(VideoProcessorBase):  
     def __init__(self):  
         super().__init__()  
@@ -53,7 +55,7 @@ class InterviewProcessor(VideoProcessorBase):
             pass  
         return frame  
 
-# 4) Load config.yaml if exists (for legacy config)  
+# 4) Load legacy config.yaml if exists  
 if os.path.exists("config.yaml"):  
     with open("config.yaml") as f:  
         config = yaml.load(f, Loader=SafeLoader)  
@@ -68,6 +70,7 @@ def get_openai_key():
         st.stop()  
     return key  
 
+@st.cache_resource(show_spinner=False)
 def openai_client():  
     return openai.OpenAI(api_key=get_openai_key())  
 
@@ -116,7 +119,7 @@ def extract_text(file):
         return None  
     return "\n".join(line.strip() for line in text.splitlines() if line.strip())  
 
-# 7) Question generation/evaluation/summarize  
+# 7) Question generation, evaluation, and summary  
 def generate_questions(resume, role, experience, num_questions, model):  
     prompt = f"Generate {num_questions} interview questions for a {role} ({experience}) based on this resume: {resume}. Return JSON list of {{'text','topic','difficulty'}}."  
     messages = [{"role": "user", "content": prompt}]  
@@ -127,7 +130,7 @@ def generate_questions(resume, role, experience, num_questions, model):
             content = response.choices[0].message.content  
         except Exception:  
             content = getattr(response.choices[0], "text", "") or str(response)  
-        match = re.search(r'\[.*\]', content, re.DOTALL)  
+        match = re.search(r'\$.*\$', content, re.DOTALL)  
         return json.loads(match.group(0)) if match else None  
     except Exception as e:  
         st.error(f"Error generating questions: {e}")  
@@ -202,7 +205,9 @@ def sidebar():
     st.sidebar.markdown(f"Welcome *{st.session_state.get('name','Guest')}*")  
     st.sidebar.markdown("---")  
     st.sidebar.markdown("### Interview Settings")  
-    st.session_state["openai_api_key"] = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here")  
+    openai_key = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here", value=st.session_state.get("openai_api_key", ""))  
+    if openai_key and openai_key != st.session_state.get("openai_api_key", ""):  
+        st.session_state["openai_api_key"] = openai_key  
 
 # 10) Convert audio frames -> WAV bytes  
 def audio_frames_to_wav_bytes(frames):  
@@ -243,15 +248,20 @@ def setup_section():
     role = st.text_input("Position / Role", st.session_state.get('role','Software Engineer'))  
     q_count = st.slider("Number of Questions", 3, 10, st.session_state.get('q_count', 5))  
     uploaded_file = st.file_uploader("Upload candidate's resume (PDF or TXT)", type=["pdf","txt"])  
+
     if uploaded_file:  
         resume_text = extract_text(uploaded_file)  
-        st.text_area("Resume Preview", resume_text, height=150)  
+        if resume_text:  
+            st.text_area("Resume Preview", resume_text, height=150)  
+        else:  
+            st.warning("Unsupported file format or empty resume.")  
+
         if st.button("Start Interview"):  
-            if resume_text and st.session_state.get('name','') and get_openai_key():  
+            if resume_text and st.session_state.get('name','').strip() and get_openai_key():  
                 st.session_state.update({  
                     "resume": resume_text,  
-                    "candidate_name": st.session_state.get('name'),  
-                    "role": role,  
+                    "candidate_name": st.session_state.get('name').strip(),  
+                    "role": role.strip(),  
                     "q_count": q_count,  
                     "answers": [],  
                     "current_q": 0,  
@@ -261,6 +271,8 @@ def setup_section():
                     qs = generate_questions(resume_text, role, "Mid-Level", q_count, MODELS["GPT-4o"])  
                     st.session_state.questions = qs or []  
                 st.experimental_rerun()  
+            else:  
+                st.warning("Please fill in all fields and upload a valid resume.")  
 
 def interview_section():  
     if "questions" not in st.session_state or not st.session_state.questions:  
@@ -306,11 +318,6 @@ def interview_section():
             processor_factory=InterviewProcessor,  
             async_processing=True,  
         )  
-        if webrtc_ctx and webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:  
-            if "audio_buffer" not in st.session_state:  
-                st.session_state.audio_buffer = []  
-            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)  
-            webrtc_ctx.processor.audio_buffer.clear()  
 
     with col2:  
         st.markdown("#### Proctoring Snapshot")  
@@ -326,6 +333,7 @@ def interview_section():
     with col_submit:  
         if st.button("Stop and Submit Answer"):  
             wav_bytes = None  
+            final_answer = None  
             try:  
                 if webrtc_ctx and hasattr(webrtc_ctx, "audio_receiver") and webrtc_ctx.audio_receiver:  
                     frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)  
@@ -333,7 +341,6 @@ def interview_section():
             except Exception:  
                 wav_bytes = None  
 
-            final_answer = None  
             if wav_bytes:  
                 with st.spinner("Transcribing audio..."):  
                     final_answer = transcribe_audio(wav_bytes)  
@@ -350,12 +357,14 @@ def interview_section():
                     st.session_state.answers.append(eval_obj)  
                     st.session_state.current_q = st.session_state.get("current_q", 0) + 1  
                     st.session_state.proctoring_img = None  
+                    st.session_state[f"typed_answer_{idx}"] = ""  
                     st.experimental_rerun()  
 
     with col_skip:  
         if st.button("Skip Question"):  
             st.session_state.current_q = st.session_state.get("current_q", 0) + 1  
             st.session_state.proctoring_img = None  
+            st.session_state[f"typed_answer_{idx}"] = ""  
             st.experimental_rerun()  
 
 def summary_section():  
@@ -364,58 +373,4 @@ def summary_section():
     answers = st.session_state.get("answers", [])  
     resume = st.session_state.get("resume","")  
     with st.spinner("Generating final summary..."):  
-        summary = summarize_session(questions, answers, resume, MODELS["GPT-4o"])  
-    st.subheader(f"Overall Score: {summary.get('overall_score','-')}/10")  
-    st.markdown(f"**Recommendation:** {summary.get('recommendation','')}")  
-    col1, col2 = st.columns(2)  
-    with col1:  
-        st.markdown("**Strengths:**")  
-        for s in summary.get("strengths", []):  
-            st.write(f"- {s}")  
-    with col2:  
-        st.markdown("**Weaknesses:**")  
-        for w in summary.get("weaknesses", []):  
-            st.write(f"- {w}")  
-    pdf_buf = generate_pdf(  
-        st.session_state.get("candidate_name", st.session_state.get("name","candidate")),  
-        st.session_state.get("role",""),  
-        summary, questions, answers  
-    )  
-    st.download_button(  
-        "Download PDF Report", pdf_buf,  
-        f"{st.session_state.get('candidate_name','candidate')}_Report.pdf",  
-        mime="application/pdf"  
-    )  
-    if st.button("Restart Interview"):  
-        st.session_state.stage = "setup"  
-        st.experimental_rerun()  
-
-# 12) App orchestrator + Google OAuth2 login  
-
-def app_logic():  
-    st.title("🧠 AI Interviewer (Final Working Version)")  
-    if "stage" not in st.session_state:  
-        st.session_state.stage = "setup"  
-    if st.session_state.stage == "setup":  
-        setup_section()  
-    elif st.session_state.stage == "interview":  
-        interview_section()  
-    elif st.session_state.stage == "summary":  
-        summary_section()  
-
-if "authentication_status" not in st.session_state:  
-    st.session_state.authentication_status = False  
-
-if not st.session_state.authentication_status:  
-    token = oauth.get_access_token()  
-    if token:  
-        user_info = oauth.get_userinfo(token)  
-        if user_info:  
-            st.session_state.authentication_status = True  
-            st.session_state.name = user_info.get("name", "")  
-            st.experimental_rerun()  
-    else:  
-        st.info("Please login with Google.")  
-else:  
-    sidebar()  
-    app_logic()
+        summary = summarize_session(questions, answers
