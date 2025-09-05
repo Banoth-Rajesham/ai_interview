@@ -23,12 +23,12 @@ MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
 
-# THIS IS THE FIX for the "Connection is taking longer" error.
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
 # --- Top-Level Class Definition for WebRTC ---
+# This class is defined at the top level (global scope) to ensure it is stable across reruns.
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
@@ -179,7 +179,7 @@ def sidebar():
     st.session_state["openai_api_key"] = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here")
 
 def app_logic():
-    st.title("🧠 AI Interviewer")
+    st.title("🧠 AI Interviewer (v4 - Final Working Version)") # <-- VISIBLE CHANGE TO CONFIRM UPDATE
     if "stage" not in st.session_state: st.session_state.stage = "setup"
     if st.session_state.stage == "setup": setup_section()
     elif st.session_state.stage == "interview": interview_section()
