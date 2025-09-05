@@ -1,8 +1,7 @@
 # ==============================================================  
-# 🧠 AI INTERVIEWER APP — Final version with Google OAuth2 login  
+# 🧠 AI INTERVIEWER APP — Simplified version without social login  
 # ==============================================================  
 
-# 1) IMPORTS  
 import streamlit as st  
 import openai  
 import PyPDF2  
@@ -14,33 +13,14 @@ import base64
 import numpy as np  
 import wave  
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase  
-from streamlit_oauth2 import OAuth2Component  
-import yaml  
-from yaml.loader import SafeLoader  
 
-# 2) CONFIG & CONSTANTS  
+# Config & constants  
 st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")  
 
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}  
-SESSION_DIR = "saved_sessions"  
-os.makedirs(SESSION_DIR, exist_ok=True)  
-
 RTC_CONFIGURATION = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})  
 
-# Replace these with your actual Google OAuth2 credentials  
-GOOGLE_CLIENT_ID = "your-google-client-id.apps.googleusercontent.com"  
-GOOGLE_CLIENT_SECRET = "your-google-client-secret"  
-REDIRECT_URI = "http://localhost:8501/"  # Change to your deployed URL  
-
-oauth = OAuth2Component(  
-    provider_name="Google",  
-    client_id=GOOGLE_CLIENT_ID,  
-    client_secret=GOOGLE_CLIENT_SECRET,  
-    redirect_uri=REDIRECT_URI,  
-    scope=["openid", "email", "profile"],  
-)  
-
-# 3) Video processor for proctoring snapshots  
+# Video processor for proctoring snapshots  
 class InterviewProcessor(VideoProcessorBase):  
     def __init__(self):  
         super().__init__()  
@@ -55,14 +35,7 @@ class InterviewProcessor(VideoProcessorBase):
             pass  
         return frame  
 
-# 4) Load legacy config.yaml if exists  
-if os.path.exists("config.yaml"):  
-    with open("config.yaml") as f:  
-        config = yaml.load(f, Loader=SafeLoader)  
-else:  
-    config = {}  
-
-# 5) OpenAI helper functions  
+# OpenAI helpers  
 def get_openai_key():  
     key = st.session_state.get("openai_api_key", "") or st.secrets.get("OPENAI_API_KEY", "")  
     if not key:  
@@ -109,7 +82,7 @@ def transcribe_audio(audio_bytes):
         st.warning(f"Whisper transcription failed: {e}")  
         return None  
 
-# 6) Resume extraction  
+# Resume extraction  
 def extract_text(file):  
     if file.name.lower().endswith(".pdf"):  
         text = "".join(page.extract_text() or "" for page in PyPDF2.PdfReader(file).pages)  
@@ -119,17 +92,13 @@ def extract_text(file):
         return None  
     return "\n".join(line.strip() for line in text.splitlines() if line.strip())  
 
-# 7) Question generation, evaluation, and summary  
+# Question generation, evaluation, summary  
 def generate_questions(resume, role, experience, num_questions, model):  
     prompt = f"Generate {num_questions} interview questions for a {role} ({experience}) based on this resume: {resume}. Return JSON list of {{'text','topic','difficulty'}}."  
     messages = [{"role": "user", "content": prompt}]  
     try:  
         response = chat_completion(messages, model=model, temperature=0.5)  
-        content = ""  
-        try:  
-            content = response.choices[0].message.content  
-        except Exception:  
-            content = getattr(response.choices[0], "text", "") or str(response)  
+        content = response.choices[0].message.content  
         match = re.search(r'\$.*\$', content, re.DOTALL)  
         return json.loads(match.group(0)) if match else None  
     except Exception as e:  
@@ -141,11 +110,7 @@ def evaluate_answer(question, answer, resume, model):
     messages = [{"role": "user", "content": prompt}]  
     try:  
         response = chat_completion(messages, model=model, temperature=0.2)  
-        content = ""  
-        try:  
-            content = response.choices[0].message.content  
-        except Exception:  
-            content = getattr(response.choices[0], "text", "") or str(response)  
+        content = response.choices[0].message.content  
         match = re.search(r'\{.*\}', content, re.DOTALL)  
         return json.loads(match.group(0)) if match else {"score": 0, "feedback": "No structured response", "better_answer": ""}  
     except Exception as e:  
@@ -157,18 +122,14 @@ def summarize_session(questions, answers, resume, model):
     messages = [{"role": "user", "content": prompt}]  
     try:  
         response = chat_completion(messages, model=model)  
-        content = ""  
-        try:  
-            content = response.choices[0].message.content  
-        except Exception:  
-            content = getattr(response.choices[0], "text", "") or str(response)  
+        content = response.choices[0].message.content  
         match = re.search(r'\{.*\}', content, re.DOTALL)  
         return json.loads(match.group(0)) if match else {}  
     except Exception as e:  
         st.error(f"Error summarizing session: {e}")  
         return {}  
 
-# 8) PDF generation  
+# PDF generation  
 class PDF(FPDF):  
     def header(self):  
         self.set_font('Arial', 'B', 12)  
@@ -200,16 +161,14 @@ def generate_pdf(name, role, summary, questions, answers):
         pdf.ln(5)  
     return pdf.output(dest='S').encode('latin-1')  
 
-# 9) Sidebar UI  
+# Sidebar UI  
 def sidebar():  
-    st.sidebar.markdown(f"Welcome *{st.session_state.get('name','Guest')}*")  
-    st.sidebar.markdown("---")  
     st.sidebar.markdown("### Interview Settings")  
     openai_key = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here", value=st.session_state.get("openai_api_key", ""))  
     if openai_key and openai_key != st.session_state.get("openai_api_key", ""):  
         st.session_state["openai_api_key"] = openai_key  
 
-# 10) Convert audio frames -> WAV bytes  
+# Convert audio frames to WAV bytes  
 def audio_frames_to_wav_bytes(frames):  
     if not frames:  
         return None  
@@ -241,7 +200,7 @@ def audio_frames_to_wav_bytes(frames):
         wf.writeframes(data.tobytes())  
     return buf.getvalue()  
 
-# 11) APP SECTIONS  
+# App sections  
 def setup_section():  
     st.header("Step 1: Resume and Candidate Details")  
     st.session_state['name'] = st.text_input("Candidate Name", value=st.session_state.get('name',''))  
@@ -373,4 +332,46 @@ def summary_section():
     answers = st.session_state.get("answers", [])  
     resume = st.session_state.get("resume","")  
     with st.spinner("Generating final summary..."):  
-        summary = summarize_session(questions, answers
+        summary = summarize_session(questions, answers, resume, MODELS["GPT-4o"])  
+    st.subheader(f"Overall Score: {summary.get('overall_score','-')}/10")  
+    st.markdown(f"**Recommendation:** {summary.get('recommendation','')}")  
+    col1, col2 = st.columns(2)  
+    with col1:  
+        st.markdown("**Strengths:**")  
+        for s in summary.get("strengths", []):  
+            st.write(f"- {s}")  
+    with col2:  
+        st.markdown("**Weaknesses:**")  
+        for w in summary.get("weaknesses", []):  
+            st.write(f"- {w}")  
+    pdf_buf = generate_pdf(  
+        st.session_state.get("candidate_name", st.session_state.get("name","candidate")),  
+        st.session_state.get("role",""),  
+        summary, questions, answers  
+    )  
+    st.download_button(  
+        "Download PDF Report", pdf_buf,  
+        f"{st.session_state.get('candidate_name','candidate')}_Report.pdf",  
+        mime="application/pdf"  
+    )  
+    if st.button("Restart Interview"):  
+        st.session_state.stage = "setup"  
+        st.experimental_rerun()  
+
+# Main app orchestrator  
+def app_logic():  
+    st.title("🧠 AI Interviewer (Simplified Version)")  
+    if "stage" not in st.session_state:  
+        st.session_state.stage = "setup"  
+    if st.session_state.stage == "setup":  
+        setup_section()  
+    elif st.session_state.stage == "interview":  
+        interview_section()  
+    elif st.session_state.stage == "summary":  
+        summary_section()  
+
+# Sidebar  
+sidebar()  
+
+# Run app  
+app_logic()
