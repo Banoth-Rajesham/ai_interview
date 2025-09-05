@@ -7,36 +7,19 @@ import os
 from fpdf import FPDF
 from datetime import datetime
 import re
-import av
 import base64
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+from streamlit_webrtc import webrtc_streamer
 import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 import time
 
+# --- Page Config ---
 st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")
+
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
-RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-)
-
-class InterviewProcessor:
-    def __init__(self):
-        self.audio_buffer = []
-        self.last_proctor_time = time.time()
-
-    def recv(self, frame):
-        if isinstance(frame, av.AudioFrame):
-            self.audio_buffer.append(frame.to_ndarray().tobytes())
-            return frame
-        elif isinstance(frame, av.VideoFrame):
-            if time.time() - self.last_proctor_time > 10:
-                st.session_state.proctoring_img = frame.to_image()
-                self.last_proctor_time = time.time()
-            return frame
 
 if not os.path.exists('config.yaml'):
     st.error("Fatal Error: `config.yaml` not found. Please create the configuration file.")
@@ -141,23 +124,7 @@ def summarize_session(questions, answers, resume, model):
         st.error(f"Error summarizing session: {e}")
         return {}
 
-class PDF(FPDF):
-    def header(self): self.set_font('Arial', 'B', 12); self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
-    def footer(self): self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-
-def generate_pdf(name, role, summary, questions, answers):
-    pdf = PDF()
-    pdf.add_page()
-    def write_text(text): pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
-    pdf.set_font('Arial', 'B', 16); write_text(f"Candidate: {name}")
-    pdf.set_font('Arial', '', 12); write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score', 'N/A')}/10\nRecommendation: {summary.get('recommendation', 'N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
-    pdf.ln(10)
-    pdf.set_font('Arial', 'B', 14); write_text("Detailed Question & Answer Analysis")
-    for i, (q, a) in enumerate(zip(questions, answers)):
-        pdf.set_font('Arial', 'B', 12); write_text(f"Q{i+1}: {q['text']}")
-        pdf.set_font('Arial', '', 12); write_text(f"Answer: {a['answer']}")
-        pdf.set_font('Arial', 'I', 12); write_text(f"Feedback: {a['feedback']} (Score: {a['score']}/10)"); pdf.ln(5)
-    return pdf.output(dest='S').encode('latin-1')
+# --- Main UI and app logic ---
 
 def sidebar():
     st.sidebar.markdown(f"Welcome *{st.session_state['name']}*")
@@ -168,10 +135,14 @@ def sidebar():
 
 def app_logic():
     st.title("🧠 AI Interviewer (v4 - Final Working Version)")
-    if "stage" not in st.session_state: st.session_state.stage = "setup"
-    if st.session_state.stage == "setup": setup_section()
-    elif st.session_state.stage == "interview": interview_section()
-    elif st.session_state.stage == "summary": summary_section()
+    if "stage" not in st.session_state:
+        st.session_state.stage = "setup"
+    if st.session_state.stage == "setup":
+        setup_section()
+    elif st.session_state.stage == "interview":
+        interview_section()
+    elif st.session_state.stage == "summary":
+        summary_section()
 
 def setup_section():
     st.header("Step 1: Resume and Candidate Details")
@@ -184,19 +155,25 @@ def setup_section():
         st.text_area("Resume Preview", resume, height=150)
         if st.button("Start Interview", type="primary"):
             if resume and name and get_openai_key():
-                st.session_state.update({"resume": resume, "candidate_name": name, "role": role, "q_count": q_count, "answers": [], "current_q": 0, "stage": "interview"})
+                st.session_state.update({
+                    "resume": resume,
+                    "candidate_name": name,
+                    "role": role,
+                    "q_count": q_count,
+                    "answers": [],
+                    "current_q": 0,
+                    "stage": "interview"
+                })
                 with st.spinner("Generating personalized questions..."):
                     st.session_state.questions = generate_questions(resume, role, "Mid-Level", q_count, MODELS["GPT-4o"])
-                st.rerun()
-            else:
-                st.warning("Please ensure all fields are complete and an API key is provided.")
+                st.experimental_rerun()
 
 def interview_section():
     idx = st.session_state.current_q
     questions = st.session_state.get("questions", [])
     if not questions or idx >= len(questions):
         st.session_state.stage = "summary"
-        st.rerun()
+        st.experimental_rerun()
     q = questions[idx]
     st.header(f"Question {idx+1}/{len(questions)}: {q['topic']} ({q['difficulty']})")
     st.subheader(q['text'])
@@ -206,6 +183,7 @@ def interview_section():
             st.session_state[f"tts_{idx}"] = audio_response.content if audio_response else None
     if st.session_state.get(f"tts_{idx}"):
         autoplay_audio(st.session_state[f"tts_{idx}"])
+
     st.markdown("---")
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -219,8 +197,7 @@ def interview_section():
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=RTC_CONFIGURATION,
             media_stream_constraints={"video": True, "audio": True},
-            video_processor_factory=InterviewProcessor,
-            start=True,
+            processor_factory=InterviewProcessor
         )
         if webrtc_ctx.state.playing and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
@@ -233,7 +210,7 @@ def interview_section():
             st.info("Waiting for first candidate snapshot...")
     st.markdown("---")
     if st.button("Stop and Submit Answer", type="primary"):
-        if webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
+        if webrtc_ctx.state.playing and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
         if not st.session_state.audio_buffer:
             st.warning("Please record an answer before submitting.")
@@ -249,7 +226,7 @@ def interview_section():
                 st.session_state.answers.append(evaluation)
                 st.session_state.current_q += 1
                 st.session_state.proctoring_img = None
-                st.rerun()
+                st.experimental_rerun()
             else:
                 st.error("Transcription failed. Please try recording your answer again.")
 
@@ -260,24 +237,34 @@ def summary_section():
     st.subheader(f"Overall Score: {summary.get('overall_score', '-')}/10")
     st.markdown(f"**Recommendation:** {summary.get('recommendation', '')}")
     col1, col2 = st.columns(2)
-    with col1: st.markdown("**Strengths:**"); [st.write(f"- {s}") for s in summary.get("strengths", [])]
-    with col2: st.markdown("**Weaknesses:**"); [st.write(f"- {w}") for w in summary.get("weaknesses", [])]
+    with col1:
+        st.markdown("**Strengths:**")
+        [st.write(f"- {s}") for s in summary.get("strengths", [])]
+    with col2:
+        st.markdown("**Weaknesses:**")
+        [st.write(f"- {w}") for w in summary.get("weaknesses", [])]
     pdf_buffer = generate_pdf(st.session_state.candidate_name, st.session_state.role, summary, st.session_state.questions, st.session_state.answers)
     st.download_button("Download PDF Report", pdf_buffer, f"{st.session_state.candidate_name}_Report.pdf", type="primary")
     if st.button("Start New Interview"):
         keys_to_clear = [k for k in st.session_state.keys() if k not in ['authentication_status', 'name', 'username']]
-        for key in keys_to_clear: del st.session_state[key]
-        st.rerun()
+        for key in keys_to_clear:
+            del st.session_state[key]
+        st.experimental_rerun()
+
 
 if "authentication_status" not in st.session_state:
     st.session_state.authentication_status = None
 if not st.session_state["authentication_status"]:
     login_tab, register_tab = st.tabs(["Login", "Register"])
+
     with login_tab:
         authenticator.login()
-        if st.session_state["authentication_status"]: st.rerun()
-        elif st.session_state["authentication_status"] is False: st.error('Username/password is incorrect')
-        elif st.session_state["authentication_status"] is None: st.warning('Please enter your username and password.')
+        if st.session_state["authentication_status"]:
+            st.experimental_rerun()
+        elif st.session_state["authentication_status"] is False:
+            st.error('Username/password is incorrect')
+        elif st.session_state["authentication_status"] is None:
+            st.warning('Please enter your username and password.')
     with register_tab:
         st.subheader("Create a New Account")
         try:
