@@ -7,3 +7,4 @@ av
 streamlit-authenticator
 PyYAML
 opencv-python-headless
+streamlit-oauth
