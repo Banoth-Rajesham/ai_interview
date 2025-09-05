@@ -279,7 +279,7 @@ def interview_section():
         st.markdown(f'<audio controls autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
 
     st.markdown("---")
-   col1, col2 = st.columns([2,1])
+col1, col2 = st.columns([2,1])
 
 with col1:
     st.markdown("#### Candidate Live Feed")
