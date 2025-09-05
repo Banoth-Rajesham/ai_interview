@@ -279,37 +279,29 @@ def interview_section():
         st.markdown(f'<audio controls autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
 
     st.markdown("---")
-col1, col2 = st.columns([2,1])
+    col1, col2 = st.columns([2,1])
 
-with col1:
-    st.markdown("#### Candidate Live Feed")
-    if "proctoring_img" not in st.session_state:
-        st.session_state.proctoring_img = None
+    with col1:
+        st.markdown("#### Candidate Live Feed")
+        if "proctoring_img" not in st.session_state:
+            st.session_state.proctoring_img = None
 
-    # Candidate Live Feed
-    webrtc_ctx = webrtc_streamer(
-        key="interview_cam",   # fixed: removed undefined idx
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration={  
-           "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-    },
-        media_stream_constraints={"video": True, "audio": True},
-        async_processing=True,
-)
+        webrtc_ctx = webrtc_streamer(
+            key="interview_cam",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"}]}],
+            media_stream_constraints={"video": True, "audio": True},
+            async_processing=True,
+        )
 
-# Safe state display
-if webrtc_ctx is None:
-    st.warning("WebRTC not initialized. Grant camera/microphone permissions and press START if present.")
-else:
-    try:
-        state_name = "unknown"
-        if hasattr(webrtc_ctx, "state") and webrtc_ctx.state is not None and hasattr(webrtc_ctx.state, "name"):
-            state_name = webrtc_ctx.state.name
-        st.write(f"WebRTC state: {state_name}")
-    except Exception:
-        st.write("WebRTC state: unknown")
-
-
+        if webrtc_ctx is None:
+            st.warning("WebRTC not initialized. Grant camera/microphone permissions and press START if present.")
+        else:
+            try:
+                state_name = getattr(getattr(webrtc_ctx, "state", None), "name", "unknown")
+                st.write(f"WebRTC state: {state_name}")
+            except Exception:
+                st.write("WebRTC state: unknown")
 
     with col2:
         st.markdown("#### Proctoring Snapshot")
@@ -319,7 +311,10 @@ else:
             st.info("Waiting for first candidate snapshot...")
 
     st.markdown("---")
+
+    # ✅ Now idx is defined here
     answer_text = st.text_area("Or type your answer here (optional):", key=f"typed_answer_{idx}", height=150)
+
 
     col_submit, col_skip = st.columns(2)
     with col_submit:
