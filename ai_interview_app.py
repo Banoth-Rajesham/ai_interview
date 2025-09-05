@@ -32,24 +32,20 @@ class InterviewProcessor(VideoProcessorBase):
         self.last_proctor_time = time.time()
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        # lightweight: capture a snapshot every 10s for proctoring (store PIL.Image)
         try:
             if time.time() - self.last_proctor_time > 10:
                 st.session_state.proctoring_img = frame.to_image()
                 self.last_proctor_time = time.time()
         except Exception:
-            # never crash the pipeline from here
-            pass
+            pass  # Never crash the pipeline from here
         return frame
 
 # 4) Auth config
 if not os.path.exists("config.yaml"):
     st.error("Fatal Error: config.yaml not found. Create it with authentication credentials.")
     st.stop()
-
 with open("config.yaml") as f:
     config = yaml.load(f, Loader=SafeLoader)
-
 authenticator = stauth.Authenticate(
     config["credentials"], config["cookie"]["name"], config["cookie"]["key"], config["cookie"]["expiry_days"]
 )
@@ -249,19 +245,21 @@ def setup_section():
                 with st.spinner("Generating personalized questions..."):
                     qs = generate_questions(resume_text, role, "Mid-Level", q_count, MODELS["GPT-4o"])
                     st.session_state.questions = qs or []
-                st.rerun()
+                st.experimental_rerun()
 
 def interview_section():
     if "questions" not in st.session_state or not st.session_state.questions:
         st.info("No questions found. Go to Setup to upload resume and generate questions.")
         if st.button("Back to Setup"):
-            st.session_state.stage = "setup"; st.rerun()
+            st.session_state.stage = "setup"; st.experimental_rerun()
         return
 
     idx = st.session_state.get("current_q", 0)
     questions = st.session_state.questions
     if idx >= len(questions):
-        st.session_state.stage = "summary"; st.rerun(); return
+        st.session_state.stage = "summary"
+        st.experimental_rerun()
+        return
 
     q = questions[idx]
     st.header(f"Question {idx+1}/{len(questions)}: {q.get('topic','General')} ({q.get('difficulty','Medium')})")
@@ -273,35 +271,28 @@ def interview_section():
         with st.spinner("Generating audio..."):
             audio_resp = text_to_speech(q.get('text',''))
             st.session_state[tts_key] = getattr(audio_resp, "content", None) if audio_resp else None
-
     if st.session_state.get(tts_key):
         b64 = base64.b64encode(st.session_state[tts_key]).decode("utf-8")
         st.markdown(f'<audio controls autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
 
     st.markdown("---")
     col1, col2 = st.columns([2,1])
-
     with col1:
         st.markdown("#### Candidate Live Feed")
         if "proctoring_img" not in st.session_state:
             st.session_state.proctoring_img = None
 
         webrtc_ctx = webrtc_streamer(
-            key="interview_cam",
+            key=f"interview_cam_{idx}",
             mode=WebRtcMode.SENDRECV,
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"}]}],
+            rtc_configuration=RTC_CONFIGURATION,
             media_stream_constraints={"video": True, "audio": True},
+            processor_factory=InterviewProcessor,
             async_processing=True,
         )
-
-        if webrtc_ctx is None:
-            st.warning("WebRTC not initialized. Grant camera/microphone permissions and press START if present.")
-        else:
-            try:
-                state_name = getattr(getattr(webrtc_ctx, "state", None), "name", "unknown")
-                st.write(f"WebRTC state: {state_name}")
-            except Exception:
-                st.write("WebRTC state: unknown")
+        if webrtc_ctx and webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
+            st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
+            webrtc_ctx.processor.audio_buffer.clear()
 
     with col2:
         st.markdown("#### Proctoring Snapshot")
@@ -311,10 +302,7 @@ def interview_section():
             st.info("Waiting for first candidate snapshot...")
 
     st.markdown("---")
-
-    # ✅ Now idx is defined here
-    answer_text = st.text_area("Or type your answer here (optional):", key=f"typed_answer_{idx}", height=150)
-
+    answer_text_input = st.text_area("Or type your answer here (optional):", key=f"typed_answer_{idx}", height=150)
 
     col_submit, col_skip = st.columns(2)
     with col_submit:
@@ -326,63 +314,81 @@ def interview_section():
                     wav_bytes = audio_frames_to_wav_bytes(frames) if frames else None
             except Exception:
                 wav_bytes = None
-
             final_answer = None
             if wav_bytes:
                 with st.spinner("Transcribing audio..."):
                     final_answer = transcribe_audio(wav_bytes)
             if not final_answer:
-                final_answer = (answer_text or "").strip() or None
-
+                final_answer = (answer_text_input or "").strip() or None
             if not final_answer:
                 st.warning("No audio or typed answer found. Please record or type an answer.")
             else:
                 with st.spinner("Evaluating answer..."):
                     eval_obj = evaluate_answer(q, final_answer, st.session_state.get("resume",""), MODELS["GPT-4o"])
                     eval_obj["answer"] = final_answer
-                    eval_obj.setdefault("score", 0); eval_obj.setdefault("feedback","")
+                    eval_obj.setdefault("score", 0)
+                    eval_obj.setdefault("feedback", "")
                     st.session_state.answers.append(eval_obj)
                     st.session_state.current_q = st.session_state.get("current_q", 0) + 1
                     st.session_state.proctoring_img = None
-                    st.rerun()
+                    st.experimental_rerun()
 
     with col_skip:
         if st.button("Skip Question"):
             st.session_state.current_q = st.session_state.get("current_q", 0) + 1
             st.session_state.proctoring_img = None
-            st.rerun()
+            st.experimental_rerun()
 
 def summary_section():
     st.header("Step 3: Interview Summary")
-    questions = st.session_state.get("questions", []); answers = st.session_state.get("answers", []); resume = st.session_state.get("resume","")
+    questions = st.session_state.get("questions", [])
+    answers = st.session_state.get("answers", [])
+    resume = st.session_state.get("resume","")
     with st.spinner("Generating final summary..."):
         summary = summarize_session(questions, answers, resume, MODELS["GPT-4o"])
     st.subheader(f"Overall Score: {summary.get('overall_score','-')}/10")
     st.markdown(f"**Recommendation:** {summary.get('recommendation','')}")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**Strengths:**"); 
-        for s in summary.get("strengths", []): st.write(f"- {s}")
+        st.markdown("**Strengths:**")
+        for s in summary.get("strengths", []):
+            st.write(f"- {s}")
     with col2:
         st.markdown("**Weaknesses:**")
-        for w in summary.get("weaknesses", []): st.write(f"- {w}")
-    pdf_buf = generate_pdf(st.session_state.get("candidate_name", st.session_state.get("name","candidate")), st.session_state.get("role",""), summary, questions, answers)
-    st.download_button("Download PDF Report", pdf_buf, f"{st.session_state.get('candidate_name','candidate')}_Report.pdf", mime="application/pdf")
+        for w in summary.get("weaknesses", []):
+            st.write(f"- {w}")
+    pdf_buf = generate_pdf(
+        st.session_state.get("candidate_name", st.session_state.get("name","candidate")),
+        st.session_state.get("role",""),
+        summary, questions, answers
+    )
+    st.download_button(
+        "Download PDF Report", pdf_buf,
+        f"{st.session_state.get('candidate_name','candidate')}_Report.pdf",
+        mime="application/pdf"
+    )
     if st.button("Restart Interview"):
-        st.session_state.stage = "setup"; st.rerun()
+        st.session_state.stage = "setup"
+        st.experimental_rerun()
 
 # 12) App orchestrator + auth UI
 def app_logic():
     st.title("🧠 AI Interviewer (Final Working Version)")
-    if "stage" not in st.session_state: st.session_state.stage = "setup"
-    if st.session_state.stage == "setup": setup_section()
-    elif st.session_state.stage == "interview": interview_section()
-    elif st.session_state.stage == "summary": summary_section()
+    if "stage" not in st.session_state:
+        st.session_state.stage = "setup"
+    if st.session_state.stage == "setup":
+        setup_section()
+    elif st.session_state.stage == "interview":
+        interview_section()
+    elif st.session_state.stage == "summary":
+        summary_section()
 
-if "authentication_status" not in st.session_state: st.session_state.authentication_status = None
+if "authentication_status" not in st.session_state:
+    st.session_state.authentication_status = None
 
 if not st.session_state["authentication_status"]:
     login_tab, register_tab = st.tabs(["Login","Register"])
+
     with login_tab:
         try:
             name, authentication_status, username = authenticator.login("Login","main")
@@ -393,21 +399,27 @@ if not st.session_state["authentication_status"]:
                 authenticator.login()
             except Exception:
                 pass
-
         if st.session_state.get("authentication_status"):
-            st.rerun()
+            st.experimental_rerun()
         elif st.session_state.get("authentication_status") is False:
             st.error("Username/password is incorrect")
         else:
             st.warning("Please enter your username and password.")
-
     with register_tab:
         st.subheader("Create a New Account")
         try:
-            if authenticator.register_user(fields={'Form name':'Create Account','Username':'username','Name':'name','Email':'email','Password':'password'}):
+            if authenticator.register_user(fields={
+                'Form name':'Create Account',
+                'Username':'username',
+                'Name':'name',
+                'Email':'email',
+                'Password':'password'
+                }):
                 st.success("User registered successfully! Please go to the Login tab to sign in.")
-                with open("config.yaml","w") as f: yaml.dump(config, f, default_flow_style=False)
+                with open("config.yaml","w") as f:
+                    yaml.dump(config, f, default_flow_style=False)
         except Exception as e:
             st.error(e)
 else:
-    sidebar(); app_logic()
+    sidebar()
+    app_logic()
