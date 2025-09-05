@@ -1,3 +1,8 @@
+# ==============================================================
+# 🧠 AI Interviewer with Live Video/Audio — Stable Final Build
+# ==============================================================
+
+# 1) Imports
 import streamlit as st
 import openai
 import PyPDF2
@@ -11,15 +16,39 @@ import base64
 import numpy as np
 import wave
 import av
+from typing import Any, Optional, Tuple
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
 
-# --- Config ---
+# 2) Page config and constants
 st.set_page_config(page_title="🧠 AI Interviewer with Live Video/Audio", layout="wide", page_icon="🧠")
-
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
 RTC_CONFIGURATION = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
 
-# --- Video processor for periodic snapshots (proctoring) ---
+# 3) Utility: stable JSON extraction (first JSON array/object in text)
+def extract_first_json_block(text: str) -> Optional[Any]:
+    if not text:
+        return None
+    # Try to find the first {...} or [...] block using a stack-based scan to avoid brittle regex
+    for open_char, close_char in [("{", "}"), ("[", "]")]:
+        stack = []
+        start_idx = None
+        for i, ch in enumerate(text):
+            if ch == open_char:
+                if not stack:
+                    start_idx = i
+                stack.append(ch)
+            elif ch == close_char and stack:
+                stack.pop()
+                if not stack and start_idx is not None:
+                    candidate = text[start_idx : i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except Exception:
+                        # continue searching for a later valid block
+                        pass
+    return None
+
+# 4) Video processor for periodic snapshots (proctoring)
 class InterviewProcessor(VideoProcessorBase):
     def __init__(self):
         super().__init__()
@@ -34,8 +63,8 @@ class InterviewProcessor(VideoProcessorBase):
             pass
         return frame
 
-# --- OpenAI helpers ---
-def get_openai_key():
+# 5) OpenAI helpers
+def get_openai_key() -> str:
     key = st.session_state.get("openai_api_key") or st.secrets.get("OPENAI_API_KEY")
     if not key:
         st.error("Please enter your OpenAI API key in the sidebar.")
@@ -43,37 +72,67 @@ def get_openai_key():
     return key
 
 def openai_client():
+    # This uses the modern OpenAI SDK style; adjust if your SDK version differs.
     return openai.OpenAI(api_key=get_openai_key())
 
-def chat_completion(messages, model="gpt-4o", temperature=0.3, max_tokens=1500):
+def chat_completion(messages, model="gpt-4o", temperature=0.3, max_tokens=1500) -> str:
     client = openai_client()
     try:
-        response = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        return response.choices[0].message.content
+        # Defensive extraction: handle different SDK variations
+        if hasattr(resp, "choices") and resp.choices:
+            choice = resp.choices
+            content = getattr(getattr(choice, "message", None), "content", None)
+            if not content:
+                content = getattr(choice, "text", None)
+            if not content:
+                content = str(resp)
+            return content
+        return str(resp)
     except Exception as e:
         st.error(f"OpenAI API error: {e}")
         st.stop()
 
-def text_to_speech(text, voice="alloy"):
+def text_to_speech(text: str, voice: str = "alloy") -> Optional[bytes]:
     client = openai_client()
     try:
         res = client.audio.speech.create(model="tts-1", voice=voice, input=text)
-        return res.content
+        # Some SDKs return a stream-like object with .read(), others a field or base64
+        # Try common access patterns safely
+        if hasattr(res, "content") and isinstance(res.content, (bytes, bytearray)):
+            return bytes(res.content)
+        if hasattr(res, "read"):
+            return res.read()
+        if isinstance(res, dict):
+            # If API returns base64 under e.g. "audio"
+            audio_b64 = res.get("audio") or res.get("data") or res.get("content")
+            if isinstance(audio_b64, str):
+                try:
+                    return base64.b64decode(audio_b64)
+                except Exception:
+                    pass
+        # Fallback: try to stringify and fail silently
+        return None
     except Exception as e:
         st.warning(f"TTS Error: {e}")
         return None
 
-def transcribe_audio(audio_bytes):
+def transcribe_audio(audio_bytes: bytes) -> Optional[str]:
     client = openai_client()
     try:
-        with io.BytesIO(audio_bytes) as file:
-            file.name = "answer.wav"
-            transcript = client.audio.transcriptions.create(model="whisper-1", file=file, response_format="text")
+        with io.BytesIO(audio_bytes) as fileobj:
+            fileobj.name = "answer.wav"
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=fileobj,
+                response_format="text",
+            )
+            # Handle variants
             if isinstance(transcript, str):
                 return transcript
             if hasattr(transcript, "text"):
@@ -85,18 +144,18 @@ def transcribe_audio(audio_bytes):
         st.warning(f"Whisper transcription failed: {e}")
         return None
 
-# --- Resume extraction ---
-def extract_text(file):
+# 6) Resume extraction
+def extract_text(file) -> Optional[str]:
     try:
-        if file.type == "application/pdf":
-            pdf = PyPDF2.PdfReader(file)
-            text = ""
-            for page in pdf.pages:
+        if getattr(file, "type", "").lower() == "application/pdf" or str(file.name).lower().endswith(".pdf"):
+            reader = PyPDF2.PdfReader(file)
+            chunks = []
+            for page in reader.pages:
                 page_text = page.extract_text()
                 if page_text:
-                    text += page_text + "\n"
-            return text.strip()
-        elif file.type == "text/plain":
+                    chunks.append(page_text)
+            return "\n".join(chunks).strip()
+        elif getattr(file, "type", "").lower() == "text/plain" or str(file.name).lower().endswith(".txt"):
             return file.getvalue().decode("utf-8").strip()
         else:
             st.error("Unsupported file type. Please upload PDF or TXT.")
@@ -105,26 +164,21 @@ def extract_text(file):
         st.error(f"Failed to extract text from resume: {e}")
         return None
 
-# --- Question generation ---
-def generate_questions(resume, role, num_questions, model):
+# 7) Question generation / evaluation / summary
+def generate_questions(resume: str, role: str, num_questions: int, model: str):
     prompt = (
         f"Generate {num_questions} interview questions for a {role} based on this resume:\n{resume}\n"
         "Return a JSON list of questions with fields: text, topic, difficulty."
     )
     messages = [{"role": "user", "content": prompt}]
     content = chat_completion(messages, model=model)
-    try:
-        match = re.search(r"\$.*\$", content, re.DOTALL)
-        questions = json.loads(match.group(0)) if match else None
-        if not questions:
-            st.warning("Could not parse questions from AI response.")
-        return questions
-    except Exception as e:
-        st.error(f"Error parsing questions JSON: {e}")
+    questions = extract_first_json_block(content)
+    if not isinstance(questions, list):
+        st.warning("Could not parse questions from AI response.")
         return None
+    return questions
 
-# --- Answer evaluation ---
-def evaluate_answer(question_text, answer_text, resume, model):
+def evaluate_answer(question_text: str, answer_text: str, resume: str, model: str):
     prompt = (
         f"Given the resume:\n{resume}\n"
         f"Evaluate the answer to the question:\n{question_text}\n"
@@ -133,21 +187,18 @@ def evaluate_answer(question_text, answer_text, resume, model):
     )
     messages = [{"role": "user", "content": prompt}]
     content = chat_completion(messages, model=model)
-    try:
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        evaluation = json.loads(match.group(0)) if match else None
-        if not evaluation:
-            return {"score": 0, "feedback": "No evaluation returned.", "better_answer": ""}
-        return evaluation
-    except Exception as e:
-        st.error(f"Error parsing evaluation JSON: {e}")
-        return {"score": 0, "feedback": "Error parsing evaluation.", "better_answer": ""}
+    evaluation = extract_first_json_block(content)
+    if not isinstance(evaluation, dict):
+        return {"score": 0, "feedback": "No evaluation returned.", "better_answer": ""}
+    return evaluation
 
-# --- Summary generation ---
-def summarize_interview(questions, answers, resume, model):
-    transcript = ""
+def summarize_interview(questions, answers, resume: str, model: str):
+    transcript_parts = []
     for q, a in zip(questions, answers):
-        transcript += f"Q: {q['text']}\nA: {a['answer']}\nScore: {a.get('score', 0)}/10\n\n"
+        transcript_parts.append(
+            f"Q: {q.get('text','')}\nA: {a.get('answer','')}\nScore: {a.get('score', 0)}/10"
+        )
+    transcript = "\n\n".join(transcript_parts)
     prompt = (
         f"Summarize the interview based on the resume:\n{resume}\n"
         f"and the transcript:\n{transcript}\n"
@@ -155,17 +206,13 @@ def summarize_interview(questions, answers, resume, model):
     )
     messages = [{"role": "user", "content": prompt}]
     content = chat_completion(messages, model=model)
-    try:
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        summary = json.loads(match.group(0)) if match else None
-        if not summary:
-            st.warning("Could not parse summary from AI response.")
-        return summary
-    except Exception as e:
-        st.error(f"Error parsing summary JSON: {e}")
+    summary = extract_first_json_block(content)
+    if not isinstance(summary, dict):
+        st.warning("Could not parse summary from AI response.")
         return None
+    return summary
 
-# --- PDF generation ---
+# 8) PDF generation
 class PDF(FPDF):
     def header(self):
         self.set_font("Arial", "B", 14)
@@ -176,7 +223,7 @@ class PDF(FPDF):
         self.set_font("Arial", "I", 8)
         self.cell(0, 10, f"Page {self.page_no()}", 0, 0, "C")
 
-def generate_pdf(name, role, summary, questions, answers):
+def generate_pdf(name, role, summary, questions, answers) -> bytes:
     pdf = PDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
@@ -191,14 +238,14 @@ def generate_pdf(name, role, summary, questions, answers):
     pdf.ln(5)
     pdf.set_font("Arial", "", 12)
     for i, (q, a) in enumerate(zip(questions, answers), 1):
-        pdf.multi_cell(0, 10, f"Q{i}: {q['text']}")
-        pdf.multi_cell(0, 10, f"Answer: {a['answer']}")
-        pdf.multi_cell(0, 10, f"Feedback: {a.get('feedback', '')} (Score: {a.get('score', 'N/A')}/10)")
+        pdf.multi_cell(0, 10, f"Q{i}: {q.get('text','')}")
+        pdf.multi_cell(0, 10, f"Answer: {a.get('answer','')}")
+        pdf.multi_cell(0, 10, f"Feedback: {a.get('feedback','')} (Score: {a.get('score','N/A')}/10)")
         pdf.ln(5)
     return pdf.output(dest="S").encode("latin-1")
 
-# --- Convert audio frames to WAV bytes ---
-def audio_frames_to_wav_bytes(frames):
+# 9) Convert audio frames -> WAV bytes (best-effort)
+def audio_frames_to_wav_bytes(frames) -> Optional[bytes]:
     if not frames:
         return None
     arrays = []
@@ -208,7 +255,8 @@ def audio_frames_to_wav_bytes(frames):
             arr = f.to_ndarray()
         except Exception:
             continue
-        if arr.ndim == 2 and arr.shape[0] <= 2 and arr.shape[0] > arr.shape[1]:
+        # Normalize shape (samples, channels)
+        if arr.ndim == 2 and arr.shape <= 2 and arr.shape > arr.shape[1]:
             arr = arr.T
         arrays.append(arr)
         sample_rate = getattr(f, "rate", None) or getattr(f, "sample_rate", sample_rate)
@@ -229,20 +277,25 @@ def audio_frames_to_wav_bytes(frames):
         wf.writeframes(data.tobytes())
     return buf.getvalue()
 
-# --- Sidebar ---
+# 10) Sidebar
 def sidebar():
     st.sidebar.title("Settings")
-    key = st.sidebar.text_input("OpenAI API Key", type="password", value=st.session_state.get("openai_api_key", ""))
+    key = st.sidebar.text_input(
+        "OpenAI API Key",
+        type="password",
+        value=st.session_state.get("openai_api_key", ""),
+        help="Key is kept in session only."
+    )
     if key:
         st.session_state["openai_api_key"] = key
 
-# --- Timer display ---
-def display_timer(start_time):
+# 11) Timer display
+def display_timer(start_time: float):
     elapsed = int(time.time() - start_time)
     mins, secs = divmod(elapsed, 60)
     st.markdown(f"**Interview Duration:** {mins:02d}:{secs:02d}")
 
-# --- Main app ---
+# 12) Main app
 def main():
     sidebar()
     st.title("🧠 AI Interviewer with Live Video & Audio")
@@ -289,7 +342,6 @@ def main():
         questions = st.session_state.get("questions", [])
         answers = st.session_state.get("answers", [])
         current_q = st.session_state.get("current_q", 0)
-
         display_timer(st.session_state.get("interview_start_time", time.time()))
 
         if current_q >= len(questions):
@@ -301,17 +353,23 @@ def main():
         st.header(f"Question {current_q + 1} of {len(questions)}")
         st.write(f"**Topic:** {q.get('topic', 'General')}")
         st.write(f"**Difficulty:** {q.get('difficulty', 'Medium')}")
-        st.write(f"**Question:** {q['text']}")
+        st.write(f"**Question:** {q.get('text','')}")
 
-        # Play TTS audio for question
+        # TTS audio for question
         tts_key = f"tts_{current_q}"
         if tts_key not in st.session_state:
             with st.spinner("Generating question audio..."):
-                audio_content = text_to_speech(q['text'])
+                audio_content = text_to_speech(q.get('text',''))
                 st.session_state[tts_key] = audio_content
         if st.session_state.get(tts_key):
-            b64 = base64.b64encode(st.session_state[tts_key]).decode("utf-8")
-            st.markdown(f'<audio controls autoplay src="data:audio/mp3;base64,{b64}"></audio>', unsafe_allow_html=True)
+            try:
+                b64 = base64.b64encode(st.session_state[tts_key]).decode("utf-8")
+                st.markdown(
+                    f'<audio controls autoplay src="data:audio/mp3;base64,{b64}"></audio>',
+                    unsafe_allow_html=True
+                )
+            except Exception:
+                pass
 
         # Live video + audio capture
         st.markdown("#### Candidate Live Video & Audio (Recording your answer)")
@@ -325,7 +383,7 @@ def main():
         )
 
         # Show proctoring snapshot every ~10 seconds
-        if "proctoring_img" in st.session_state and st.session_state.proctoring_img:
+        if st.session_state.get("proctoring_img") is not None:
             st.image(st.session_state.proctoring_img, caption="Proctoring Snapshot (updated every 10s)")
 
         # Typed answer fallback
@@ -336,8 +394,10 @@ def main():
             if st.button("Stop and Submit Answer"):
                 wav_bytes = None
                 final_answer = None
+
+                # Safely pull audio frames if available
                 try:
-                    if webrtc_ctx and webrtc_ctx.audio_receiver:
+                    if webrtc_ctx and hasattr(webrtc_ctx, "audio_receiver") and webrtc_ctx.audio_receiver:
                         frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
                         wav_bytes = audio_frames_to_wav_bytes(frames) if frames else None
                 except Exception:
@@ -346,13 +406,15 @@ def main():
                 if wav_bytes:
                     with st.spinner("Transcribing audio..."):
                         final_answer = transcribe_audio(wav_bytes)
+
                 if not final_answer:
-                    final_answer = typed_answer.strip() or None
+                    final_answer = (typed_answer or "").strip() or None
+
                 if not final_answer:
                     st.warning("No audio or typed answer found. Please record or type an answer.")
                 else:
                     with st.spinner("Evaluating answer..."):
-                        evaluation = evaluate_answer(q['text'], final_answer, st.session_state.resume, MODELS["GPT-4o"])
+                        evaluation = evaluate_answer(q.get('text',''), final_answer, st.session_state.get("resume",""), MODELS["GPT-4o"])
                     evaluation["answer"] = final_answer
                     evaluation.setdefault("score", 0)
                     evaluation.setdefault("feedback", "")
@@ -384,13 +446,11 @@ def main():
         if summary:
             st.subheader(f"Overall Score: {summary.get('overall_score', 'N/A')}/10")
             st.markdown(f"**Recommendation:** {summary.get('recommendation', '')}")
-
             st.markdown("**Strengths:**")
-            for s in summary.get("strengths", []):
+            for s in summary.get("strengths", []) or []:
                 st.write(f"- {s}")
-
             st.markdown("**Weaknesses:**")
-            for w in summary.get("weaknesses", []):
+            for w in summary.get("weaknesses", []) or []:
                 st.write(f"- {w}")
 
             pdf_bytes = generate_pdf(
@@ -410,4 +470,14 @@ def main():
             if st.button("Restart Interview"):
                 keys_to_clear = [
                     "stage", "candidate_name", "role", "resume", "num_questions",
-                
+                    "questions", "answers", "current_q", "interview_start_time",
+                    "proctoring_img"
+                ]
+                for k in keys_to_clear:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                st.experimental_rerun()
+
+# Entry point
+if __name__ == "__main__":
+    main()
