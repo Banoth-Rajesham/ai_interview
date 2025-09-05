@@ -260,13 +260,15 @@ def interview_section():
             st.session_state.audio_buffer = []
         if "proctoring_img" not in st.session_state:
             st.session_state.proctoring_img = None
+
+        
         webrtc_ctx = webrtc_streamer(
             key=f"interview_cam_{idx}",
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=RTC_CONFIGURATION,
             media_stream_constraints={"video": True, "audio": True},
-            processor_factory=InterviewProcessor,
-        )
+            processor_factory=lambda: InterviewProcessor(),  # ✅ Correct
+)
         if webrtc_ctx and webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
             webrtc_ctx.processor.audio_buffer.clear()
