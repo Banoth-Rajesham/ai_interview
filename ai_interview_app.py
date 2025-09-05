@@ -280,9 +280,10 @@ def interview_section():
 
     st.markdown("---")
     col1, col2 = st.columns([2,1])
-    with col1:
+        with col1:
         st.markdown("#### Candidate Live Feed")
-        if "proctoring_img" not in st.session_state: st.session_state.proctoring_img = None
+        if "proctoring_img" not in st.session_state:
+            st.session_state.proctoring_img = None
 
         webrtc_ctx = webrtc_streamer(
             key=f"interview_cam_{idx}",
@@ -294,17 +295,22 @@ def interview_section():
             audio_receiver_size=1024
         )
 
-        # safe state display
+        # ✅ safe state display (proper indentation)
         if webrtc_ctx is None:
             st.warning("WebRTC not initialized. Grant camera/microphone permissions and press START if present.")
         else:
             try:
                 state_name = "unknown"
-                if hasattr(webrtc_ctx, "state") and webrtc_ctx.state is not None and hasattr(webrtc_ctx.state, "name"):
+                if (
+                    hasattr(webrtc_ctx, "state")
+                    and webrtc_ctx.state is not None
+                    and hasattr(webrtc_ctx.state, "name")
+                ):
                     state_name = webrtc_ctx.state.name
                 st.write(f"WebRTC state: {state_name}")
             except Exception:
                 st.write("WebRTC state: unknown")
+
 
     with col2:
         st.markdown("#### Proctoring Snapshot")
