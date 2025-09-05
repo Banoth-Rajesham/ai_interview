@@ -16,7 +16,7 @@ import base64
 import numpy as np
 import wave
 import av
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
 
 # 2) Page config and constants
@@ -28,7 +28,6 @@ RTC_CONFIGURATION = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.goog
 def extract_first_json_block(text: str) -> Optional[Any]:
     if not text:
         return None
-    # Try to find the first {...} or [...] block using a stack-based scan to avoid brittle regex
     for open_char, close_char in [("{", "}"), ("[", "]")]:
         stack = []
         start_idx = None
@@ -44,7 +43,7 @@ def extract_first_json_block(text: str) -> Optional[Any]:
                     try:
                         return json.loads(candidate)
                     except Exception:
-                        # continue searching for a later valid block
+                        # Keep scanning for next valid JSON block
                         pass
     return None
 
@@ -53,6 +52,8 @@ class InterviewProcessor(VideoProcessorBase):
     def __init__(self):
         super().__init__()
         self.last_snapshot_time = time.time()
+        # Optional: a simple audio buffer field (not used by default)
+        self.audio_buffer = []
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         try:
@@ -72,7 +73,6 @@ def get_openai_key() -> str:
     return key
 
 def openai_client():
-    # This uses the modern OpenAI SDK style; adjust if your SDK version differs.
     return openai.OpenAI(api_key=get_openai_key())
 
 def chat_completion(messages, model="gpt-4o", temperature=0.3, max_tokens=1500) -> str:
@@ -84,9 +84,8 @@ def chat_completion(messages, model="gpt-4o", temperature=0.3, max_tokens=1500) 
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        # Defensive extraction: handle different SDK variations
         if hasattr(resp, "choices") and resp.choices:
-            choice = resp.choices
+            choice = resp.choices[0]
             content = getattr(getattr(choice, "message", None), "content", None)
             if not content:
                 content = getattr(choice, "text", None)
@@ -102,21 +101,15 @@ def text_to_speech(text: str, voice: str = "alloy") -> Optional[bytes]:
     client = openai_client()
     try:
         res = client.audio.speech.create(model="tts-1", voice=voice, input=text)
-        # Some SDKs return a stream-like object with .read(), others a field or base64
-        # Try common access patterns safely
+        # Try common return shapes
         if hasattr(res, "content") and isinstance(res.content, (bytes, bytearray)):
             return bytes(res.content)
         if hasattr(res, "read"):
             return res.read()
         if isinstance(res, dict):
-            # If API returns base64 under e.g. "audio"
             audio_b64 = res.get("audio") or res.get("data") or res.get("content")
             if isinstance(audio_b64, str):
-                try:
-                    return base64.b64decode(audio_b64)
-                except Exception:
-                    pass
-        # Fallback: try to stringify and fail silently
+                return base64.b64decode(audio_b64)
         return None
     except Exception as e:
         st.warning(f"TTS Error: {e}")
@@ -132,7 +125,6 @@ def transcribe_audio(audio_bytes: bytes) -> Optional[str]:
                 file=fileobj,
                 response_format="text",
             )
-            # Handle variants
             if isinstance(transcript, str):
                 return transcript
             if hasattr(transcript, "text"):
@@ -256,7 +248,7 @@ def audio_frames_to_wav_bytes(frames) -> Optional[bytes]:
         except Exception:
             continue
         # Normalize shape (samples, channels)
-        if arr.ndim == 2 and arr.shape <= 2 and arr.shape > arr.shape[1]:
+        if arr.ndim == 2 and arr.shape[0] <= 2 and arr.shape[0] > arr.shape[1]:
             arr = arr.T
         arrays.append(arr)
         sample_rate = getattr(f, "rate", None) or getattr(f, "sample_rate", sample_rate)
@@ -478,6 +470,10 @@ def main():
                         del st.session_state[k]
                 st.experimental_rerun()
 
-# Entry point
+# Entry point with last-resort guard to avoid “Oh no” blank screen
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        st.error("A runtime error occurred. See app logs for details.")
+        st.exception(e)
