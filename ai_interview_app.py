@@ -1,5 +1,5 @@
 # ==============================================================
-# 🧠 AI INTERVIEWER APP (Final Version with Step-by-Step Comments)
+# 🧠 AI INTERVIEWER APP (Final Version - Complete & Fixed)
 # ==============================================================
 
 # ------------------------------
@@ -13,7 +13,9 @@ from fpdf import FPDF              # To generate PDF reports
 from datetime import datetime
 import av                          # Audio/Video frames (for webcam + mic)
 import base64                      # Encode/Decode audio
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration   # Live video/audio streaming
+import numpy as np                 # For audio array handling
+import wave                        # For writing WAV bytes
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase  # Live video/audio streaming
 import streamlit_authenticator as stauth   # Authentication (login/signup)
 import yaml                        # For config.yaml file
 from yaml.loader import SafeLoader
@@ -24,38 +26,36 @@ from yaml.loader import SafeLoader
 # ------------------------------
 st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")
 
-# Models available
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
-
-# Where to save session files
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
 
-# WebRTC (Google STUN server for live video/audio)
 RTC_CONFIGURATION = RTCConfiguration({
     "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
 })
 
 
 # ------------------------------
-# 3. INTERVIEW PROCESSOR (Handles video/audio frames)
+# 3. INTERVIEW PROCESSOR (Handles video frames)
+#    - MUST subclass VideoProcessorBase and return av.VideoFrame
 # ------------------------------
-class InterviewProcessor:
+class InterviewProcessor(VideoProcessorBase):
     def __init__(self):
-        self.audio_buffer = []
+        super().__init__()
+        # we will not store audio here; audio frames are read from webrtc_ctx.audio_receiver
         self.last_proctor_time = time.time()
 
-    def recv(self, frame):
-        if isinstance(frame, av.AudioFrame):
-            # Save candidate's microphone audio
-            self.audio_buffer.append(frame.to_ndarray().tobytes())
-            return frame
-        elif isinstance(frame, av.VideoFrame):
-            # Take a snapshot every 10 seconds (for proctoring)
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        # This runs in a worker thread — keep light and defensive.
+        try:
             if time.time() - self.last_proctor_time > 10:
+                # Save a snapshot (PIL.Image) to session_state for display
                 st.session_state.proctoring_img = frame.to_image()
                 self.last_proctor_time = time.time()
-            return frame
+        except Exception:
+            # Prevent exceptions from breaking the pipeline
+            pass
+        return frame
 
 
 # ------------------------------
@@ -115,6 +115,7 @@ def text_to_speech(text, voice="alloy"):
         return None
 
 def transcribe_audio(audio_bytes):
+    """Expect valid WAV/PCM bytes. Returns string transcript or None"""
     client = openai_client()
     try:
         with io.BytesIO(audio_bytes) as file:
@@ -122,7 +123,15 @@ def transcribe_audio(audio_bytes):
             transcript = client.audio.transcriptions.create(
                 model="whisper-1", file=file, response_format="text"
             )
-            return transcript
+            # The API may return a string or an object with text depending on wrapper
+            if isinstance(transcript, str):
+                return transcript
+            elif hasattr(transcript, "text"):
+                return transcript.text
+            elif isinstance(transcript, dict) and "text" in transcript:
+                return transcript["text"]
+            else:
+                return str(transcript)
     except Exception as e:
         st.warning(f"Whisper transcription failed: {e}")
         return None
@@ -142,28 +151,42 @@ def extract_text(file):
 
 
 # ------------------------------
-# 8. INTERVIEW QUESTION GENERATION
+# 8. INTERVIEW QUESTION GENERATION & EVALUATION
 # ------------------------------
 def generate_questions(resume, role, experience, num_questions, model):
     prompt = f"""Generate {num_questions} diverse interview questions for a {role} ({experience}) based on this resume: {resume}.
-                 Return a JSON list with 'text', 'topic', and 'difficulty'."""
+Return a JSON list of objects, each with 'text', 'topic', and 'difficulty' keys."""
     messages = [{"role": "user", "content": prompt}]
     try:
         response = chat_completion(messages, model=model, temperature=0.5)
-        json_match = re.search(r'\[.*\]', response.choices[0].message.content, re.DOTALL)
+        # wrapper may place message in response.choices[0].message.content
+        content = ""
+        try:
+            content = response.choices[0].message.content
+        except Exception:
+            content = getattr(response.choices[0], "text", "") or str(response)
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
         return json.loads(json_match.group(0)) if json_match else None
     except Exception as e:
         st.error(f"Error generating questions: {e}")
         return None
 
 def evaluate_answer(question, answer, resume, model):
-    prompt = f"""Evaluate the candidate's answer. Resume: {resume}. Question: {question['text']}. Answer: {answer}.
-                 Return JSON with 'score', 'feedback', 'better_answer'."""
+    prompt = f"""Evaluate the candidate's answer based on their resume.
+Resume: {resume}
+Question: {question['text']}
+Answer: {answer}
+Return a JSON object with 'score' (1-10), 'feedback', and 'better_answer'."""
     messages = [{"role": "user", "content": prompt}]
     try:
         response = chat_completion(messages, model=model, temperature=0.2)
-        json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
-        return json.loads(json_match.group(0)) if json_match else {}
+        content = ""
+        try:
+            content = response.choices[0].message.content
+        except Exception:
+            content = getattr(response.choices[0], "text", "") or str(response)
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        return json.loads(json_match.group(0)) if json_match else {"score":0,"feedback":"No structured response","better_answer":""}
     except Exception as e:
         return {"score": 0, "feedback": f"Evaluation error: {e}", "better_answer": "N/A"}
 
@@ -173,15 +196,20 @@ def evaluate_answer(question, answer, resume, model):
 # ------------------------------
 def summarize_session(questions, answers, resume, model):
     transcript = "\n".join(
-        f"Q: {q['text']}\nA: {a['answer']}\nScore: {a['score']}/10"
+        f"Q: {q['text']}\nA: {a['answer']}\nScore: {a.get('score',0)}/10"
         for q, a in zip(questions, answers)
     )
     prompt = f"""Summarize the interview. Resume: {resume}. Transcript: {transcript}.
-                 Return JSON with 'overall_score', 'strengths', 'weaknesses', 'recommendation'."""
+Return a JSON object with 'overall_score' (1-10), 'strengths' (list), 'weaknesses' (list), and 'recommendation' ('Strong Hire'|'Hire'|'No Hire')."""
     messages = [{"role": "user", "content": prompt}]
     try:
         response = chat_completion(messages, model=model)
-        json_match = re.search(r'\{.*\}', response.choices[0].message.content, re.DOTALL)
+        content = ""
+        try:
+            content = response.choices[0].message.content
+        except Exception:
+            content = getattr(response.choices[0], "text", "") or str(response)
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
         return json.loads(json_match.group(0)) if json_match else {}
     except Exception as e:
         st.error(f"Error summarizing session: {e}")
@@ -195,7 +223,6 @@ class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
         self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
-
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
@@ -204,10 +231,8 @@ class PDF(FPDF):
 def generate_pdf(name, role, summary, questions, answers):
     pdf = PDF()
     pdf.add_page()
-
     def write_text(text):
         pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
-
     pdf.set_font('Arial', 'B', 16)
     write_text(f"Candidate: {name}")
     pdf.set_font('Arial', '', 12)
@@ -218,16 +243,14 @@ def generate_pdf(name, role, summary, questions, answers):
     pdf.ln(10)
     pdf.set_font('Arial', 'B', 14)
     write_text("Detailed Question & Answer Analysis")
-
     for i, (q, a) in enumerate(zip(questions, answers)):
         pdf.set_font('Arial', 'B', 12)
         write_text(f"Q{i+1}: {q['text']}")
         pdf.set_font('Arial', '', 12)
-        write_text(f"Answer: {a['answer']}")
+        write_text(f"Answer: {a.get('answer','')}")
         pdf.set_font('Arial', 'I', 12)
-        write_text(f"Feedback: {a['feedback']} (Score: {a['score']}/10)")
+        write_text(f"Feedback: {a.get('feedback','')} (Score: {a.get('score','N/A')}/10)")
         pdf.ln(5)
-
     return pdf.output(dest='S').encode('latin-1')
 
 
@@ -235,17 +258,60 @@ def generate_pdf(name, role, summary, questions, answers):
 # 11. SIDEBAR
 # ------------------------------
 def sidebar():
-    st.sidebar.markdown(f"Welcome *{st.session_state['name']}*")
-    authenticator.logout('Logout', 'sidebar', key='logout_button')
+    st.sidebar.markdown(f"Welcome *{st.session_state.get('name','Guest')}*")
+    try:
+        authenticator.logout('Logout', 'sidebar', key='logout_button')
+    except Exception:
+        pass
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Interview Settings")
-    st.session_state["openai_api_key"] = st.sidebar.text_input(
-        "OpenAI API Key", type="password", placeholder="Paste key here"
-    )
+    st.session_state["openai_api_key"] = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here")
 
 
 # ------------------------------
-# 12. MAIN APP LOGIC
+# 12. UTIL: Convert list[av.AudioFrame] -> WAV bytes
+# ------------------------------
+def audio_frames_to_wav_bytes(frames):
+    """
+    Convert list of av.AudioFrame to 16-bit PCM WAV bytes.
+    Best-effort: aligns channels and sample rates.
+    """
+    if not frames:
+        return None
+    arrays = []
+    sample_rate = None
+    for f in frames:
+        try:
+            arr = f.to_ndarray()
+        except Exception:
+            continue
+        # handle layout: (channels, samples) or (samples, channels)
+        if arr.ndim == 2 and arr.shape[0] <= 2 and arr.shape[0] > arr.shape[1]:
+            arr = arr.T
+        arrays.append(arr)
+        # try to read sample rate
+        sample_rate = getattr(f, "rate", None) or getattr(f, "sample_rate", sample_rate)
+    if not arrays:
+        return None
+    data = np.concatenate(arrays, axis=0)
+    # cast to int16 if floats
+    if np.issubdtype(data.dtype, np.floating):
+        data = (data * 32767).astype(np.int16)
+    else:
+        data = data.astype(np.int16)
+    nch = data.shape[1] if data.ndim == 2 else 1
+    sr = int(sample_rate or 48000)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(nch)
+        wf.setsampwidth(2)  # 16-bit
+        wf.setframerate(sr)
+        wf.writeframes(data.tobytes())
+    return buf.getvalue()
+
+
+# ------------------------------
+# 13. MAIN APP LOGIC & SECTIONS
 # ------------------------------
 def app_logic():
     st.title("🧠 AI Interviewer (v4 - Final Working Version)")
@@ -259,48 +325,164 @@ def app_logic():
         summary_section()
 
 
-# ------------------------------
-# 13. SECTIONS (Setup → Interview → Summary)
-# ------------------------------
 def setup_section():
-    st.subheader("📄 Setup Interview")
-    role = st.text_input("Job Role", "Data Scientist")
-    exp = st.selectbox("Experience Level", ["Fresher", "Mid-level", "Senior"])
-    resume = st.file_uploader("Upload Resume (PDF/TXT)", type=["pdf", "txt"])
-    if st.button("Start Interview") and resume:
-        st.session_state.resume_text = extract_text(resume)
-        st.session_state.role = role
-        st.session_state.exp = exp
-        st.session_state.stage = "interview"
-        st.experimental_rerun()
+    st.header("Step 1: Resume and Candidate Details")
+    # Candidate fields
+    st.session_state['name'] = st.text_input("Candidate Name", value=st.session_state.get('name', ''))
+    role = st.text_input("Position / Role", st.session_state.get('role', 'Software Engineer'))
+    q_count = st.slider("Number of Questions", 3, 10, st.session_state.get('q_count', 5))
+    uploaded_file = st.file_uploader("Upload candidate's resume (PDF or TXT)", type=["pdf", "txt"])
+    if uploaded_file:
+        resume = extract_text(uploaded_file)
+        st.text_area("Resume Preview", resume, height=150)
+        if st.button("Start Interview"):
+            if resume and st.session_state.get('name', '') and get_openai_key():
+                st.session_state.update({
+                    "resume": resume,
+                    "candidate_name": st.session_state.get('name'),
+                    "role": role,
+                    "q_count": q_count,
+                    "answers": [],
+                    "current_q": 0,
+                    "stage": "interview"
+                })
+                with st.spinner("Generating personalized questions..."):
+                    questions = generate_questions(resume, role, "Mid-Level", q_count, MODELS["GPT-4o"])
+                    st.session_state.questions = questions or []
+                st.experimental_rerun()
 
 
 def interview_section():
-    st.subheader("🎥 Live Interview")
-    st.write("Your camera & microphone will start below:")
+    # Safety checks
+    if "questions" not in st.session_state or not st.session_state.questions:
+        st.info("No questions found. Go to Setup to upload resume and generate questions.")
+        if st.button("Back to Setup"):
+            st.session_state.stage = "setup"
+            st.experimental_rerun()
+        return
 
-    webrtc_streamer(
-        key="interview_cam",
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration=RTC_CONFIGURATION,
-        media_stream_constraints={"video": True, "audio": True},
-        video_processor_factory=InterviewProcessor,
-        async_processing=True,
-    )
-
-    if st.button("Finish Interview"):
+    idx = st.session_state.get("current_q", 0)
+    questions = st.session_state.questions
+    if idx >= len(questions):
         st.session_state.stage = "summary"
         st.experimental_rerun()
+        return
+
+    q = questions[idx]
+    st.header(f"Question {idx+1}/{len(questions)}: {q.get('topic','General')} ({q.get('difficulty','Medium')})")
+    st.subheader(q.get('text', ''))
+
+    # Generate TTS if not present
+    tts_key = f"tts_{idx}"
+    if tts_key not in st.session_state:
+        with st.spinner("Generating audio..."):
+            audio_response = text_to_speech(q.get('text', ''))
+            st.session_state[tts_key] = getattr(audio_response, "content", None) if audio_response else None
+
+    # Play TTS if available
+    if st.session_state.get(tts_key):
+        b64 = base64.b64encode(st.session_state[tts_key]).decode("utf-8")
+        st.markdown(f"""<audio controls autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>""", unsafe_allow_html=True)
+
+    st.markdown("---")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown("#### Candidate Live Feed")
+        if "proctoring_img" not in st.session_state:
+            st.session_state.proctoring_img = None
+
+        webrtc_ctx = webrtc_streamer(
+            key=f"interview_cam_{idx}",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIGURATION,
+            media_stream_constraints={"video": True, "audio": True},
+            video_processor_factory=InterviewProcessor,
+            async_processing=True,
+            audio_receiver_size=1024
+        )
+
+        # show status
+        if webrtc_ctx:
+            st.write(f"WebRTC state: {webrtc_ctx.state.name if hasattr(webrtc_ctx,'state') else 'unknown'}")
+
+    with col2:
+        st.markdown("#### Proctoring Snapshot")
+        if st.session_state.proctoring_img:
+            st.image(st.session_state.proctoring_img, caption=f"Snapshot at {datetime.now().strftime('%H:%M:%S')}")
+        else:
+            st.info("Waiting for first candidate snapshot...")
+
+    st.markdown("---")
+    answer_textarea = st.text_area("Or type your answer here (optional):", key=f"typed_answer_{idx}", height=150)
+
+    col_submit, col_skip = st.columns(2)
+    with col_submit:
+        if st.button("Stop and Submit Answer"):
+            # Try to fetch audio frames from audio_receiver
+            wav_bytes = None
+            try:
+                if webrtc_ctx and hasattr(webrtc_ctx, "audio_receiver") and webrtc_ctx.audio_receiver:
+                    frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
+                    wav_bytes = audio_frames_to_wav_bytes(frames) if frames else None
+            except Exception as e:
+                # fallback: no audio frames
+                wav_bytes = None
+
+            # Prefer transcribed audio; otherwise use typed answer
+            answer_text = None
+            if wav_bytes:
+                with st.spinner("Transcribing audio..."):
+                    answer_text = transcribe_audio(wav_bytes)
+            if not answer_text:
+                answer_text = answer_textarea.strip() or None
+
+            if not answer_text:
+                st.warning("No audio or typed answer found. Please record or type an answer.")
+            else:
+                with st.spinner("Evaluating answer..."):
+                    evaluation = evaluate_answer(q, answer_text, st.session_state.get("resume", ""), MODELS["GPT-4o"])
+                    # ensure keys exist
+                    evaluation["answer"] = answer_text
+                    evaluation.setdefault("score", 0)
+                    evaluation.setdefault("feedback", "")
+                    st.session_state.answers.append(evaluation)
+                    st.session_state.current_q = st.session_state.get("current_q", 0) + 1
+                    st.session_state.proctoring_img = None
+                    st.experimental_rerun()
+
+    with col_skip:
+        if st.button("Skip Question"):
+            st.session_state.current_q = st.session_state.get("current_q", 0) + 1
+            st.session_state.proctoring_img = None
+            st.experimental_rerun()
 
 
 def summary_section():
-    st.subheader("📊 Interview Summary")
-    st.success("This is where the AI-generated report will appear.")
+    st.header("Step 3: Interview Summary")
+    questions = st.session_state.get("questions", [])
+    answers = st.session_state.get("answers", [])
+    resume = st.session_state.get("resume", "")
+    with st.spinner("Generating final summary..."):
+        summary = summarize_session(questions, answers, resume, MODELS["GPT-4o"])
+    st.subheader(f"Overall Score: {summary.get('overall_score', '-')}/10")
+    st.markdown(f"**Recommendation:** {summary.get('recommendation', '')}")
 
-    if st.button("Restart"):
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Strengths:**")
+        for s in summary.get("strengths", []):
+            st.write(f"- {s}")
+    with col2:
+        st.markdown("**Weaknesses:**")
+        for w in summary.get("weaknesses", []):
+            st.write(f"- {w}")
+
+    pdf_buffer = generate_pdf(st.session_state.get("candidate_name", st.session_state.get("name","candidate")), st.session_state.get("role",""), summary, questions, answers)
+    st.download_button("Download PDF Report", pdf_buffer, f"{st.session_state.get('candidate_name','candidate')}_Report.pdf", mime="application/pdf")
+
+    if st.button("Restart Interview"):
         st.session_state.stage = "setup"
         st.experimental_rerun()
-
 
 
 # ------------------------------
@@ -310,16 +492,23 @@ if "authentication_status" not in st.session_state:
     st.session_state.authentication_status = None
 
 if not st.session_state["authentication_status"]:
-    # Login/Register tabs
     login_tab, register_tab = st.tabs(["Login", "Register"])
 
     with login_tab:
-        authenticator.login()
-        if st.session_state["authentication_status"]:
+        try:
+            name, authentication_status, username = authenticator.login('Login', 'main')
+        except Exception:
+            # If wrapper signature differs, call with no return; the library may set st.session_state in-place
+            try:
+                authenticator.login()
+            except Exception:
+                pass
+
+        if st.session_state.get("authentication_status"):
             st.experimental_rerun()
-        elif st.session_state["authentication_status"] is False:
+        elif st.session_state.get("authentication_status") is False:
             st.error('Username/password is incorrect')
-        elif st.session_state["authentication_status"] is None:
+        else:
             st.warning('Please enter your username and password.')
 
     with register_tab:
@@ -339,5 +528,6 @@ if not st.session_state["authentication_status"]:
             st.error(e)
 
 else:
+    # Show sidebar and run app logic
     sidebar()
     app_logic()
