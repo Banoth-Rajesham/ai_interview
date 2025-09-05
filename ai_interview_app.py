@@ -279,37 +279,38 @@ def interview_section():
         st.markdown(f'<audio controls autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>', unsafe_allow_html=True)
 
     st.markdown("---")
-    col1, col2 = st.columns([2,1])
-      with col1:
-        st.markdown("#### Candidate Live Feed")
-        if "proctoring_img" not in st.session_state:
-            st.session_state.proctoring_img = None
+   col1, col2 = st.columns([2,1])
 
-        webrtc_ctx = webrtc_streamer(
-            key=f"interview_cam_{idx}",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTC_CONFIGURATION,
-            media_stream_constraints={"video": True, "audio": True},
-            video_processor_factory=InterviewProcessor,
-            async_processing=True,
-            audio_receiver_size=1024
-        )
+with col1:
+    st.markdown("#### Candidate Live Feed")
+    if "proctoring_img" not in st.session_state:
+        st.session_state.proctoring_img = None
 
-        # ✅ safe state display (proper indentation)
-        if webrtc_ctx is None:
-            st.warning("WebRTC not initialized. Grant camera/microphone permissions and press START if present.")
-        else:
-            try:
-                state_name = "unknown"
-                if (
-                    hasattr(webrtc_ctx, "state")
-                    and webrtc_ctx.state is not None
-                    and hasattr(webrtc_ctx.state, "name")
-                ):
-                    state_name = webrtc_ctx.state.name
-                st.write(f"WebRTC state: {state_name}")
-            except Exception:
-                st.write("WebRTC state: unknown")
+    webrtc_ctx = webrtc_streamer(
+        key=f"interview_cam_{idx}",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=RTC_CONFIGURATION,
+        media_stream_constraints={"video": True, "audio": True},
+        video_processor_factory=InterviewProcessor,
+        async_processing=True,
+        audio_receiver_size=1024
+    )
+
+    # ✅ safe state display
+    if webrtc_ctx is None:
+        st.warning("WebRTC not initialized. Grant camera/microphone permissions and press START if present.")
+    else:
+        try:
+            state_name = "unknown"
+            if (
+                hasattr(webrtc_ctx, "state")
+                and webrtc_ctx.state is not None
+                and hasattr(webrtc_ctx.state, "name")
+            ):
+                state_name = webrtc_ctx.state.name
+            st.write(f"WebRTC state: {state_name}")
+        except Exception:
+            st.write("WebRTC state: unknown")
 
 
     with col2:
