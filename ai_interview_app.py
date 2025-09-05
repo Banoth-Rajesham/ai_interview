@@ -410,4 +410,4 @@ def main():
             if st.button("Restart Interview"):
                 keys_to_clear = [
                     "stage", "candidate_name", "role", "resume", "num_questions",
-                    "
+                
