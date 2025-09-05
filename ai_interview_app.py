@@ -1,5 +1,5 @@
 # ==============================================================
-# 🧠 AI INTERVIEWER APP — Production-hardened final version
+# 🧠 AI INTERVIEWER APP — Production-hardened final version with Google OAuth login
 # ==============================================================
 
 # 1) IMPORTS
@@ -14,7 +14,7 @@ import base64
 import numpy as np
 import wave
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
-import streamlit_authenticator as stauth
+from streamlit_oauth import oauth_login  # Added for Google OAuth
 import yaml
 from yaml.loader import SafeLoader
 
@@ -37,18 +37,15 @@ class InterviewProcessor(VideoProcessorBase):
                 st.session_state.proctoring_img = frame.to_image()
                 self.last_proctor_time = time.time()
         except Exception:
-            pass  # Never crash the pipeline from here
+            pass
         return frame
 
-# 4) Auth config
-if not os.path.exists("config.yaml"):
-    st.error("Fatal Error: config.yaml not found. Create it with authentication credentials.")
-    st.stop()
-with open("config.yaml") as f:
-    config = yaml.load(f, Loader=SafeLoader)
-authenticator = stauth.Authenticate(
-    config["credentials"], config["cookie"]["name"], config["cookie"]["key"], config["cookie"]["expiry_days"]
-)
+# 4) Load config.yaml for other config or skip if not needed
+if os.path.exists("config.yaml"):
+    with open("config.yaml") as f:
+        config = yaml.load(f, Loader=SafeLoader)
+else:
+    config = {}  # Empty if you don't need legacy config
 
 # 5) OpenAI helpers
 def get_openai_key():
@@ -155,7 +152,7 @@ def summarize_session(questions, answers, resume, model):
         st.error(f"Error summarizing session: {e}")
         return {}
 
-# 8) PDF generator (defensive encoding)
+# 8) PDF generator
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -170,29 +167,31 @@ def generate_pdf(name, role, summary, questions, answers):
     pdf.add_page()
     def write_text(text):
         pdf.multi_cell(0, 10, text.encode('latin-1', 'replace').decode('latin-1'))
-    pdf.set_font('Arial', 'B', 16); write_text(f"Candidate: {name}")
+    pdf.set_font('Arial', 'B', 16)
+    write_text(f"Candidate: {name}")
     pdf.set_font('Arial', '', 12)
     write_text(f"Role: {role}\nOverall Score: {summary.get('overall_score','N/A')}/10\nRecommendation: {summary.get('recommendation','N/A')}\nDate: {datetime.now().strftime('%Y-%m-%d')}")
     pdf.ln(10)
-    pdf.set_font('Arial', 'B', 14); write_text("Detailed Question & Answer Analysis")
+    pdf.set_font('Arial', 'B', 14)
+    write_text("Detailed Question & Answer Analysis")
     for i, (q, a) in enumerate(zip(questions, answers)):
-        pdf.set_font('Arial', 'B', 12); write_text(f"Q{i+1}: {q.get('text','')}")
-        pdf.set_font('Arial', '', 12); write_text(f"Answer: {a.get('answer','')}")
-        pdf.set_font('Arial', 'I', 12); write_text(f"Feedback: {a.get('feedback','')} (Score: {a.get('score','N/A')}/10)"); pdf.ln(5)
+        pdf.set_font('Arial', 'B', 12)
+        write_text(f"Q{i+1}: {q.get('text','')}")
+        pdf.set_font('Arial', '', 12)
+        write_text(f"Answer: {a.get('answer','')}")
+        pdf.set_font('Arial', 'I', 12)
+        write_text(f"Feedback: {a.get('feedback','')} (Score: {a.get('score','N/A')}/10)")
+        pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1')
 
 # 9) Sidebar UI
 def sidebar():
     st.sidebar.markdown(f"Welcome *{st.session_state.get('name','Guest')}*")
-    try:
-        authenticator.logout('Logout', 'sidebar', key='logout_button')
-    except Exception:
-        pass
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Interview Settings")
     st.session_state["openai_api_key"] = st.sidebar.text_input("OpenAI API Key", type="password", placeholder="Paste key here")
 
-# 10) Convert audio frames -> WAV bytes (best-effort)
+# 10) Convert audio frames -> WAV bytes
 def audio_frames_to_wav_bytes(frames):
     if not frames:
         return None
@@ -218,10 +217,13 @@ def audio_frames_to_wav_bytes(frames):
     sr = int(sample_rate or 48000)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
-        wf.setnchannels(nch); wf.setsampwidth(2); wf.setframerate(sr); wf.writeframes(data.tobytes())
+        wf.setnchannels(nch)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(data.tobytes())
     return buf.getvalue()
 
-# 11) APP SECTIONS (setup, interview, summary) — fully implemented and robust
+# 11) APP SECTIONS: setup, interview, summary
 def setup_section():
     st.header("Step 1: Resume and Candidate Details")
     st.session_state['name'] = st.text_input("Candidate Name", value=st.session_state.get('name',''))
@@ -251,7 +253,8 @@ def interview_section():
     if "questions" not in st.session_state or not st.session_state.questions:
         st.info("No questions found. Go to Setup to upload resume and generate questions.")
         if st.button("Back to Setup"):
-            st.session_state.stage = "setup"; st.experimental_rerun()
+            st.session_state.stage = "setup"
+            st.experimental_rerun()
         return
 
     idx = st.session_state.get("current_q", 0)
@@ -265,7 +268,7 @@ def interview_section():
     st.header(f"Question {idx+1}/{len(questions)}: {q.get('topic','General')} ({q.get('difficulty','Medium')})")
     st.subheader(q.get('text',''))
 
-    # TTS generation (defensive)
+    # TTS generation
     tts_key = f"tts_{idx}"
     if tts_key not in st.session_state:
         with st.spinner("Generating audio..."):
@@ -291,6 +294,8 @@ def interview_section():
             async_processing=True,
         )
         if webrtc_ctx and webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
+            if "audio_buffer" not in st.session_state:
+                st.session_state.audio_buffer = []
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
             webrtc_ctx.processor.audio_buffer.clear()
 
@@ -314,6 +319,7 @@ def interview_section():
                     wav_bytes = audio_frames_to_wav_bytes(frames) if frames else None
             except Exception:
                 wav_bytes = None
+
             final_answer = None
             if wav_bytes:
                 with st.spinner("Transcribing audio..."):
@@ -383,43 +389,29 @@ def app_logic():
     elif st.session_state.stage == "summary":
         summary_section()
 
+# ---- Google OAuth Login Integration (minimal, replace previous auth) ----
+GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"  # Put your Google OAuth client ID here
+GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"  # Put your Google OAuth client secret here
+REDIRECT_URI = "http://localhost:8501/"  # Change to your deployed URL
+
 if "authentication_status" not in st.session_state:
-    st.session_state.authentication_status = None
+    st.session_state.authentication_status = False
 
-if not st.session_state["authentication_status"]:
-    login_tab, register_tab = st.tabs(["Login","Register"])
-
-    with login_tab:
-        try:
-            name, authentication_status, username = authenticator.login("Login","main")
-            st.session_state["authentication_status"] = authentication_status
-            st.session_state["name"] = name or st.session_state.get("name","")
-        except Exception:
-            try:
-                authenticator.login()
-            except Exception:
-                pass
-        if st.session_state.get("authentication_status"):
-            st.experimental_rerun()
-        elif st.session_state.get("authentication_status") is False:
-            st.error("Username/password is incorrect")
-        else:
-            st.warning("Please enter your username and password.")
-    with register_tab:
-        st.subheader("Create a New Account")
-        try:
-            if authenticator.register_user(fields={
-                'Form name':'Create Account',
-                'Username':'username',
-                'Name':'name',
-                'Email':'email',
-                'Password':'password'
-                }):
-                st.success("User registered successfully! Please go to the Login tab to sign in.")
-                with open("config.yaml","w") as f:
-                    yaml.dump(config, f, default_flow_style=False)
-        except Exception as e:
-            st.error(e)
+if not st.session_state.authentication_status:
+    user_info = oauth_login(
+        provider="google",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        redirect_uri=REDIRECT_URI,
+        scope=["openid", "email", "profile"],
+        open_browser=True,
+    )
+    if user_info:
+        st.session_state.authentication_status = True
+        st.session_state.name = user_info.get("name", "")
+        st.experimental_rerun()
+    else:
+        st.info("Please login with Google to continue.")
 else:
     sidebar()
     app_logic()
