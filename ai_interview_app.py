@@ -254,7 +254,7 @@ def interview_section():
         if "proctoring_img" not in st.session_state:
             st.session_state.proctoring_img = None
 
-        webrtc_streamer(
+        webrtc_ctx=webrtc_streamer(
             key=f"interview_{st.session_state.current_q}",
             media_stream_constraints={"video": True, "audio": True}
             )
