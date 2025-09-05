@@ -239,7 +239,7 @@ def interview_section():
             st.session_state.proctoring_img = None
         
         # This is the line from the error (line 238) - now simplified
-         webrtc_ctx = webrtc_streamer(key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV, rtc_configuration=RTC_CONFIGURATION, media_stream_constraints={"video": True, "audio": True}, video_processor_factory=InterviewProcessor, start=True)
+        webrtc_ctx = webrtc_streamer(key=f"interview_cam_{idx}", mode=WebRtcMode.SENDRECV, rtc_configuration=RTC_CONFIGURATION, media_stream_constraints={"video": True, "audio": True}, video_processor_factory=InterviewProcessor, start=True)
 
         
         if webrtc_ctx.state.playing and webrtc_ctx.processor:
