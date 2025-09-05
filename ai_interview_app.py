@@ -20,7 +20,7 @@ from yaml.loader import SafeLoader
 
 # 2) CONFIG & CONSTANTS
 st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")
-MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4","GPT-5", "GPT-3.5": "gpt-3.5-turbo"}
+MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
 RTC_CONFIGURATION = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
