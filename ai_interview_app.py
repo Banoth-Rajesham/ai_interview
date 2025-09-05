@@ -15,10 +15,7 @@ import yaml
 from yaml.loader import SafeLoader
 import time
 
-# --- Page Config ---
 st.set_page_config(page_title="🧠 AI Interviewer", layout="wide", page_icon="🧠")
-
-# --- Constants ---
 MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
@@ -26,11 +23,11 @@ RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# --- Top-Level Class Definition for WebRTC ---
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
         self.last_proctor_time = time.time()
+
     def recv(self, frame):
         if isinstance(frame, av.AudioFrame):
             self.audio_buffer.append(frame.to_ndarray().tobytes())
@@ -41,12 +38,13 @@ class InterviewProcessor:
                 self.last_proctor_time = time.time()
             return frame
 
-# --- User Authentication ---
 if not os.path.exists('config.yaml'):
     st.error("Fatal Error: `config.yaml` not found. Please create the configuration file.")
     st.stop()
+
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
+
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
@@ -54,7 +52,6 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-# --- Utility Functions ---
 def get_openai_key():
     key = st.session_state.get("openai_api_key", "")
     if not key and "OPENAI_API_KEY" in st.secrets:
@@ -111,7 +108,6 @@ def autoplay_audio(audio_bytes: bytes):
     md = f"""<audio controls autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></source></audio>"""
     st.markdown(md, unsafe_allow_html=True)
 
-# --- Core AI Logic ---
 def generate_questions(resume, role, experience, num_questions, model):
     prompt = f"""Generate {num_questions} diverse interview questions for a {role} ({experience}) based on this resume: {resume}. Return a JSON list of objects, each with 'text', 'topic', and 'difficulty' keys."""
     messages = [{"role": "user", "content": prompt}]
@@ -145,10 +141,10 @@ def summarize_session(questions, answers, resume, model):
         st.error(f"Error summarizing session: {e}")
         return {}
 
-# --- PDF Generation ---
 class PDF(FPDF):
     def header(self): self.set_font('Arial', 'B', 12); self.cell(0, 10, 'AI Interview Report', 0, 1, 'C')
     def footer(self): self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
 def generate_pdf(name, role, summary, questions, answers):
     pdf = PDF()
     pdf.add_page()
@@ -163,7 +159,6 @@ def generate_pdf(name, role, summary, questions, answers):
         pdf.set_font('Arial', 'I', 12); write_text(f"Feedback: {a['feedback']} (Score: {a['score']}/10)"); pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- Main Application UI ---
 def sidebar():
     st.sidebar.markdown(f"Welcome *{st.session_state['name']}*")
     authenticator.logout('Logout', 'sidebar', key='logout_button')
@@ -219,16 +214,14 @@ def interview_section():
             st.session_state.audio_buffer = []
         if "proctoring_img" not in st.session_state:
             st.session_state.proctoring_img = None
-
         webrtc_ctx = webrtc_streamer(
             key=f"interview_cam_{idx}",
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=RTC_CONFIGURATION,
             media_stream_constraints={"video": True, "audio": True},
             video_processor_factory=InterviewProcessor,
-            start=True
+            start=True,
         )
-
         if webrtc_ctx.state.playing and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
             webrtc_ctx.processor.audio_buffer.clear()
@@ -264,7 +257,8 @@ def summary_section():
     st.header("Step 3: Interview Summary")
     with st.spinner("Generating final summary..."):
         summary = summarize_session(st.session_state.questions, st.session_state.answers, st.session_state.resume, MODELS["GPT-4o"])
-    st.subheader(f"Overall Score: {summary.get('overall_score', '-')}/10"); st.markdown(f"**Recommendation:** {summary.get('recommendation', '')}")
+    st.subheader(f"Overall Score: {summary.get('overall_score', '-')}/10")
+    st.markdown(f"**Recommendation:** {summary.get('recommendation', '')}")
     col1, col2 = st.columns(2)
     with col1: st.markdown("**Strengths:**"); [st.write(f"- {s}") for s in summary.get("strengths", [])]
     with col2: st.markdown("**Weaknesses:**"); [st.write(f"- {w}") for w in summary.get("weaknesses", [])]
@@ -275,7 +269,6 @@ def summary_section():
         for key in keys_to_clear: del st.session_state[key]
         st.rerun()
 
-# --- Main App Execution ---
 if "authentication_status" not in st.session_state:
     st.session_state.authentication_status = None
 if not st.session_state["authentication_status"]:
