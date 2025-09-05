@@ -280,7 +280,7 @@ def interview_section():
 
     st.markdown("---")
     col1, col2 = st.columns([2,1])
-        with col1:
+      with col1:
         st.markdown("#### Candidate Live Feed")
         if "proctoring_img" not in st.session_state:
             st.session_state.proctoring_img = None
