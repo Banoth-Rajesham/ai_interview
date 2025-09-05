@@ -29,6 +29,8 @@ RTC_CONFIGURATION = RTCConfiguration(
 
 # --- Top-Level Class Definition for WebRTC ---
 # This class is defined at the top level (global scope) to ensure it is stable across reruns.
+# --- Top-Level Class Definition for WebRTC ---
+# This class MUST be at the top level (global scope) to be stable.
 class InterviewProcessor:
     def __init__(self):
         self.audio_buffer = []
@@ -207,6 +209,8 @@ def setup_section():
 
 # --- REPLACE THIS ENTIRE FUNCTION IN ai_interview_app.py ---
 
+# --- REPLACE THIS ENTIRE FUNCTION IN ai_interview_app.py ---
+
 def interview_section():
     idx = st.session_state.current_q
     questions = st.session_state.get("questions", [])
@@ -234,7 +238,7 @@ def interview_section():
         if "proctoring_img" not in st.session_state:
             st.session_state.proctoring_img = None
         
-        # This is the line from the error (line 229) - now corrected and simplified
+        # This is the line from the error (line 238) - now simplified
         webrtc_ctx = webrtc_streamer(
             key=f"interview_cam_{idx}",
             mode=WebRtcMode.SENDRECV,
