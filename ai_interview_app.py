@@ -21,10 +21,10 @@ MODELS = {"GPT-4o": "gpt-4o", "GPT-4": "gpt-4", "GPT-3.5": "gpt-3.5-turbo"}
 SESSION_DIR = "saved_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
 
+# Load config and setup authentication
 if not os.path.exists('config.yaml'):
     st.error("Fatal Error: `config.yaml` not found. Please create the configuration file.")
     st.stop()
-
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
@@ -124,8 +124,6 @@ def summarize_session(questions, answers, resume, model):
         st.error(f"Error summarizing session: {e}")
         return {}
 
-# --- Main UI and app logic ---
-
 def sidebar():
     st.sidebar.markdown(f"Welcome *{st.session_state['name']}*")
     authenticator.logout('Logout', 'sidebar', key='logout_button')
@@ -183,7 +181,6 @@ def interview_section():
             st.session_state[f"tts_{idx}"] = audio_response.content if audio_response else None
     if st.session_state.get(f"tts_{idx}"):
         autoplay_audio(st.session_state[f"tts_{idx}"])
-
     st.markdown("---")
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -195,7 +192,7 @@ def interview_section():
         webrtc_ctx = webrtc_streamer(
             key=f"interview_cam_{idx}",
             mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTC_CONFIGURATION,
+            rtc_configuration=None,
             media_stream_constraints={"video": True, "audio": True},
             processor_factory=InterviewProcessor
         )
@@ -210,7 +207,7 @@ def interview_section():
             st.info("Waiting for first candidate snapshot...")
     st.markdown("---")
     if st.button("Stop and Submit Answer", type="primary"):
-        if webrtc_ctx.state.playing and webrtc_ctx.processor:
+        if webrtc_ctx.state.playing and hasattr(webrtc_ctx, 'processor') and webrtc_ctx.processor:
             st.session_state.audio_buffer.extend(webrtc_ctx.processor.audio_buffer)
         if not st.session_state.audio_buffer:
             st.warning("Please record an answer before submitting.")
@@ -245,12 +242,6 @@ def summary_section():
         [st.write(f"- {w}") for w in summary.get("weaknesses", [])]
     pdf_buffer = generate_pdf(st.session_state.candidate_name, st.session_state.role, summary, st.session_state.questions, st.session_state.answers)
     st.download_button("Download PDF Report", pdf_buffer, f"{st.session_state.candidate_name}_Report.pdf", type="primary")
-    if st.button("Start New Interview"):
-        keys_to_clear = [k for k in st.session_state.keys() if k not in ['authentication_status', 'name', 'username']]
-        for key in keys_to_clear:
-            del st.session_state[key]
-        st.experimental_rerun()
-
 
 if "authentication_status" not in st.session_state:
     st.session_state.authentication_status = None
