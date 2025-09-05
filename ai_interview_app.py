@@ -15,6 +15,7 @@ import numpy as np
 import wave
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
 from streamlit_oauth import oauth_login  # Added for Google OAuth
+from streamlit_oauth import OAuth2Component
 import yaml
 from yaml.loader import SafeLoader
 
